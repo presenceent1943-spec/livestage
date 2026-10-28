@@ -101,7 +101,7 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; b
 .empty { color: var(--fg-3); padding: 30px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
 
 /* 라이브 */
-.live { display: grid; grid-template-columns: minmax(0, 1fr) 300px 320px; gap: 14px; align-items: start; }
+.live-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px 320px; gap: 14px; align-items: start; }
 .video { background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); position: relative; }
 .video canvas, .video video { display: block; width: 100%; aspect-ratio: 16/9; max-width: 100%; background: #000; }
 .video .ov { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 12px; }
@@ -212,10 +212,10 @@ td.r, th.r { text-align: right; }
 .tabbar button span { font-size: 18px; }
 .tabbar button.on { color: var(--gold-2); }
 
-@media (max-width: 1100px) { .live { grid-template-columns: minmax(0,1fr) 300px; } .live .chat { grid-column: 1 / -1; height: 420px; } }
+@media (max-width: 1100px) { .live-layout { grid-template-columns: minmax(0,1fr) 300px; } .live-layout .chat { grid-column: 1 / -1; height: 420px; } }
 @media (max-width: 760px) {
   .hdr .nav, .hdr .role, .hdr .auth { display: none; }
-  .live { grid-template-columns: 1fr; } .live .chat { grid-column: auto; height: 380px; }
+  .live-layout { grid-template-columns: 1fr; } .live-layout .chat { grid-column: auto; height: 380px; }
   .dash { grid-template-columns: 1fr; } .side { position: static; display: flex; overflow-x: auto; gap: 4px; }
   .side button { white-space: nowrap; } .side button.on { border-left: 0; border-bottom: 2px solid var(--gold); }
   .side .sel { min-width: 180px; margin: 0; }
@@ -501,12 +501,12 @@ function renderLive() {
   const lb = labelOf(s.labelId);
   const ended = s.status !== 'live';
   app.innerHTML = `
-    <div class="live">
+    <div class="live-layout">
       <div style="min-width:0">
         <div class="video">
           ${s.playUrl && !ended ? `<video id="vidEl" playsinline autoplay muted></video>` : `<canvas id="vid" width="960" height="540"></canvas>`}
           <div class="ov"><div class="ov-top"><span class="pill ${ended?'gray':'live'}">${ended ? (s.status==='stopped'?'운영자 중단':'종료됨') : '● LIVE'}</span><span class="pill gray num" id="vw">👁 ${s.viewers.toLocaleString()}</span><span class="pill new">${s.playUrl && !ended ? '실제 송출' : '샘플 영상'}</span></div></div>
-          ${s.playUrl && !ended ? `<div class="sample" id="vidMsg" style="top:auto;bottom:44px;transform:translateX(-50%)"><small>서버 연결 중…</small></div><button class="btn sm gold" id="unmute" style="position:absolute;right:12px;bottom:12px">🔊 소리 켜기</button>` : `<div class="sample"><b>${ended ? '방송이 종료되었습니다' : '실제 라이브 영상이 들어갈 자리'}</b><small>스튜디오 → 방송 설정에서 재생 주소(HLS)를 넣으면 실제 송출이 보입니다</small></div>`}
+          ${s.playUrl && !ended ? `<div class="sample" id="vidMsg" style="top:auto;bottom:44px;transform:translateX(-50%)"><small>서버 연결 중…</small></div><div style="position:absolute;right:12px;bottom:12px;display:flex;gap:6px"><button class="btn sm" id="rotate" title="영상 회전">↻ 회전</button><button class="btn sm gold" id="unmute">🔊 소리 켜기</button></div>` : `<div class="sample"><b>${ended ? '방송이 종료되었습니다' : '실제 라이브 영상이 들어갈 자리'}</b><small>스튜디오 → 방송 설정에서 재생 주소(HLS)를 넣으면 실제 송출이 보입니다</small></div>`}
           <div class="alert-stack" id="alerts"></div>
         </div>
         <div class="live-meta">
@@ -543,7 +543,6 @@ function renderLive() {
     if (srvChannel) sb.removeChannel(srvChannel);
     srvChannel = sb.channel('live-'+s.id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'stream_id=eq.'+s.id }, ({ new: m }) => {
-        if (m.kind === 'gift' && ME && m.user_id === ME.id) return; // 내 선물은 이미 표시
         addMsg(m.nick, m.text, m.kind==='gift'?'gift':(ME&&m.user_id===ME.id)?'me':'');
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'performers', filter: 'stream_id=eq.'+s.id }, ({ new: p }) => {
@@ -584,7 +583,6 @@ async function gift(s, performerId, g, from, auto=false) {
     if (error) { toast('선물 실패: ' + error.message); return; }
     // 합계는 realtime UPDATE 로 반영됨; 알림만 즉시
     const a = $('#alerts'); if (a) { const d = document.createElement('div'); d.className = 'gift-alert' + (g.stars>=1000?' big':''); d.textContent = `${g.emoji} ${from} 님이 ${p.name} 에게 ${g.name} (${STAR(g.stars)})`; a.appendChild(d); setTimeout(()=>d.remove(), g.stars>=1000?6000:3500); while (a.children.length>3) a.firstChild.remove(); }
-    window.__addMsg && window.__addMsg(from, `${g.emoji} ${p.name} 에게 ${g.name} ${STAR(g.stars)} 선물!`, 'gift');
     return;
   }
   p.total += g.stars;
@@ -640,6 +638,10 @@ function playStream(url) {
   const say = t => { if (msg) msg.innerHTML = `<small>${esc(t)}</small>`; };
   if (hlsInst) { hlsInst.destroy(); hlsInst = null; }
   const um = $('#unmute'); if (um) um.onclick = () => { v.muted = false; v.play().catch(()=>{}); um.remove(); };
+  let rot = 0; try { rot = +(localStorage.getItem('ls-rot')||0); } catch(e) {}
+  const applyRot = () => { v.style.transform = rot ? `rotate(${rot}deg)` : ''; v.style.objectFit = 'contain'; };
+  applyRot();
+  const rb = $('#rotate'); if (rb) rb.onclick = () => { rot = (rot + 180) % 360; try { localStorage.setItem('ls-rot', rot); } catch(e) {} applyRot(); };
   if (window.Hls && Hls.isSupported()) {
     hlsInst = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6, backBufferLength: 10 });
     hlsInst.loadSource(url); hlsInst.attachMedia(v);
