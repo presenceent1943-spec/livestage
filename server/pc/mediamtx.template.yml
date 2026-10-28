@@ -1,5 +1,5 @@
-# LIVE STAGE - MediaMTX (PC 서버). start.ps1 이 password.txt 를 읽어 __PASS__ 를 채워 mediamtx.yml 로 만듭니다.
-# 송출(publish)은 비밀번호 필요, 시청(read)은 누구나.
+# LIVE STAGE - MediaMTX (PC server). start.ps1 reads password.txt, fills __PASS__ and writes mediamtx.yml
+# publish needs the password; read (viewing) is open to everyone.
 logLevel: info
 authMethod: internal
 authInternalUsers:

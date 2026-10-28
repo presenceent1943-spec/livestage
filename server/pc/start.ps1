@@ -1,4 +1,4 @@
-# LIVE STAGE — one-click start: server + 2 tunnels + auto-register to app server + keep-alive
+# LIVE STAGE - one-click start: server + 2 tunnels + auto-register to app server + keep-alive
 $ErrorActionPreference = 'Continue'
 Set-Location $PSScriptRoot
 $SB  = 'https://zomssaylcebzirpvprgq.supabase.co'
@@ -27,8 +27,10 @@ function StartTunnel($port, $name) {
   return $null
 }
 function StartServer() {
-  $p = Start-Process -FilePath (Join-Path $PSScriptRoot 'mediamtx.exe') -ArgumentList 'mediamtx.yml' -WorkingDirectory $PSScriptRoot -WindowStyle Minimized -PassThru
+  $log = Join-Path $PSScriptRoot 'server.log'
+  $p = Start-Process -FilePath (Join-Path $PSScriptRoot 'mediamtx.exe') -ArgumentList 'mediamtx.yml' -WorkingDirectory $PSScriptRoot -WindowStyle Minimized -RedirectStandardError $log -PassThru
   Start-Sleep -Seconds 2
+  if ($p.HasExited) { Write-Host '  [FAIL] server exited right away. Last lines of server.log:' -ForegroundColor Red; Get-Content $log -Tail 5 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red } }
   return $p
 }
 
@@ -37,8 +39,10 @@ Write-Host ' LIVE STAGE - one-click start'
 Write-Host '=============================================='
 # 0. password -> mediamtx.yml
 $pass = (Get-Content (Join-Path $PSScriptRoot 'password.txt') -Raw).Trim()
-if (-not $pass -or $pass -like '*change-this*') { Write-Host '  [WARN] password.txt 를 긴 비밀번호로 바꾸세요 (지금은 기본값)' -ForegroundColor Yellow }
-(Get-Content (Join-Path $PSScriptRoot 'mediamtx.template.yml') -Raw).Replace('__PASS__', $pass) | Set-Content (Join-Path $PSScriptRoot 'mediamtx.yml') -Encoding UTF8
+if (-not $pass -or $pass -like '*change-this*') { Write-Host '  [WARN] password.txt is still the default - change it to a long password' -ForegroundColor Yellow }
+$yml = (Get-Content (Join-Path $PSScriptRoot 'mediamtx.template.yml') -Raw).Replace('__PASS__', $pass)
+[System.IO.File]::WriteAllText((Join-Path $PSScriptRoot 'mediamtx.yml'), $yml, (New-Object System.Text.UTF8Encoding $false))   # no BOM (server cannot read yml with BOM)
+Get-ChildItem $PSScriptRoot -Filter *.exe | Unblock-File -ErrorAction SilentlyContinue   # remove mark-of-the-web -> no security popup
 # 1. server
 Get-Process mediamtx -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -68,7 +72,7 @@ Write-Host '=============================================='
 try {
   while ($true) {
     Start-Sleep -Seconds 20
-    if ($srv.HasExited) { Write-Host "  [$(Get-Date -Format HH:mm:ss)] server died - restarting" -ForegroundColor Yellow; $srv = StartServer }
+    if ($srv.HasExited) { Write-Host "  [$(Get-Date -Format HH:mm:ss)] server died - restarting (see server.log)" -ForegroundColor Yellow; $srv = StartServer; if ($srv.HasExited) { Start-Sleep -Seconds 40 } }
     if (-not $t1 -or $t1.proc.HasExited) { Write-Host "  [$(Get-Date -Format HH:mm:ss)] viewer tunnel died - restarting" -ForegroundColor Yellow; $t1 = StartTunnel 8888 'viewer'; if ($t1) { Register 'tunnel' $t1.url } }
     if (-not $t2 -or $t2.proc.HasExited) { Write-Host "  [$(Get-Date -Format HH:mm:ss)] camera tunnel died - restarting" -ForegroundColor Yellow; $t2 = StartTunnel 8889 'camera'; if ($t2) { Register 'whip_tunnel' $t2.url } }
   }
