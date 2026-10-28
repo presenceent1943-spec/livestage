@@ -453,7 +453,7 @@ function openAuth(mode) {
 async function logout() { if (sb) await sb.auth.signOut(); ME = null; WALLET = null; if (walletChan) { sb.removeChannel(walletChan); walletChan = null; } S.myName = '나(시청자)'; save(); renderAuthBox(); render(); toast('로그아웃했습니다'); }
 
 /* ---------- 앱 내 카메라 송출 (보정 + WebRTC/WHIP) ---------- */
-const camState = { on: false, stream: null, raw: null, pc: null, whipUrl: null, raf: 0, msg: '', f: { smooth: 45, bright: 8, warm: 10, sharp: 10, mirror: true } };
+const camState = { on: false, stream: null, raw: null, pc: null, whipUrl: null, raf: 0, msg: '', f: { smooth: 35, bright: 8, warm: 10, sharp: 10, mirror: true, rot: 0 } };
 try { Object.assign(camState.f, JSON.parse(localStorage.getItem('ls-cam-f')||'{}')); } catch(e) {}
 function camSay(t) { camState.msg = t; const m = $('#camMsg'); if (m) m.textContent = t; }
 async function camOpen(facing) {
@@ -472,17 +472,19 @@ function camDraw() {
     if (v.videoWidth) {
       const f = camState.f;
       // 영상 비율 맞춰 세로 꽉 채우기
-      const vr = v.videoWidth / v.videoHeight, cr = W / H; let sw, sh, sx, sy;
+      const rot = f.rot || 0, swap = rot === 90 || rot === 270;
+      const tw = swap ? H : W, th = swap ? W : H;           // 회전 전 목표 크기
+      const vr = v.videoWidth / v.videoHeight, cr = tw / th; let sw, sh, sx, sy;
       if (vr > cr) { sh = v.videoHeight; sw = sh * cr; sx = (v.videoWidth - sw) / 2; sy = 0; } else { sw = v.videoWidth; sh = sw / cr; sx = 0; sy = (v.videoHeight - sh) / 2; }
-      ctx.save(); if (f.mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
-      // 1) 기본 색 보정
       const b = 1 + f.bright/100, sat = 1 + f.warm/100, con = 1 + f.sharp/200;
-      ctx.filter = `brightness(${b}) saturate(${sat}) contrast(${con})`;
-      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, W, H);
-      // 2) 피부 보정: 블러 레이어를 부분 투명으로 덮기 (소프트 포커스)
+      const drawSrc = (c2, filt) => { c2.save(); c2.translate(W/2, H/2); c2.rotate(rot * Math.PI/180); if (f.mirror) c2.scale(-1, 1); c2.filter = filt; c2.drawImage(v, sx, sy, sw, sh, -tw/2, -th/2, tw, th); c2.restore(); };
+      ctx.save();
+      // 1) 기본 색 보정
+      drawSrc(ctx, `brightness(${b}) saturate(${sat}) contrast(${con})`);
+      // 2) 피부 보정: 약한 블러 레이어를 'lighten' 성향으로 얇게 덮기 — 윤곽은 살리고 잡티만 완화
       if (f.smooth > 0) {
-        octx.save(); octx.filter = `blur(${2 + f.smooth/12}px) brightness(${b}) saturate(${sat})`; octx.drawImage(v, sx, sy, sw, sh, 0, 0, W, H); octx.restore();
-        ctx.filter = 'none'; ctx.globalAlpha = f.smooth/100 * 0.75; ctx.drawImage(off, 0, 0); ctx.globalAlpha = 1;
+        octx.clearRect(0,0,W,H); drawSrc(octx, `blur(${1 + f.smooth/30}px) brightness(${b*1.02}) saturate(${sat})`);
+        ctx.filter = 'none'; ctx.globalAlpha = f.smooth/100 * 0.45; ctx.drawImage(off, 0, 0); ctx.globalAlpha = 1;
       }
       // 3) 따뜻함: 살짝 주황 오버레이
       if (f.warm > 0) { ctx.filter = 'none'; ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(255,180,120,${f.warm/100*0.5})`; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation = 'source-over'; }
@@ -927,6 +929,7 @@ function renderStudio() {
             <div class="lbl">화사함(따뜻함) <b id="vWarm">${camState.f.warm}</b><input type="range" id="fWarm" min="0" max="40" value="${camState.f.warm}"></div>
             <div class="lbl">선명도 <b id="vSharp">${camState.f.sharp}</b><input type="range" id="fSharp" min="0" max="40" value="${camState.f.sharp}"></div>
             <div class="safety"><label><input type="checkbox" id="fMirror" ${camState.f.mirror?'checked':''}> 거울 모드(좌우 반전)</label></div>
+            <div class="lbl">회전 (영상이 누워 보이면)<div class="row">${[0,90,180,270].map(r=>`<button class="btn sm ${camState.f.rot===r?'gold':''}" data-rot="${r}">${r}°</button>`).join('')}</div></div>
             <div class="row">
               <button class="btn" id="camPreview">카메라 미리보기</button>
               ${camState.on ? '<button class="btn danger" id="camStop">⏹ 송출 중지</button>' : '<button class="btn gold" id="camStart">🔴 송출 시작</button>'}
@@ -1023,6 +1026,7 @@ function renderStudio() {
   if (S.studioTab === 'cam') {
     const bind = (id, key, lab) => { const el = $('#'+id); if (!el) return; el.oninput = () => { camState.f[key] = +el.value; const l = $('#'+lab); if (l) l.textContent = el.value; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} }; };
     bind('fSmooth','smooth','vSmooth'); bind('fBright','bright','vBright'); bind('fWarm','warm','vWarm'); bind('fSharp','sharp','vSharp');
+    app.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => { camState.f.rot = +b.dataset.rot; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} app.querySelectorAll('[data-rot]').forEach(x => x.classList.toggle('gold', x === b)); });
     const mir = $('#fMirror'); if (mir) mir.onchange = () => { camState.f.mirror = mir.checked; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} };
     const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>camSay('미리보기 중 — 보정을 조절한 뒤 송출 시작')).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
     const cs = $('#camSel'); if (cs) cs.onchange = () => { if (camState.raw) camOpen(cs.value); };
