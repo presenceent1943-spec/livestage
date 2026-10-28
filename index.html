@@ -14,6 +14,7 @@
 <title>LIVE STAGE 시제품</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=DM+Serif+Display&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 /* Layout: 상단 고정 헤더 + 화면별 본문. 라이브 화면은 데스크톱 3열(영상·출연자·채팅), 모바일은 세로 스택 + 하단 탭바 */
 :root {
@@ -239,13 +240,13 @@ td.r, th.r { text-align: right; }
     <div class="role">데모 역할
       <select id="roleSel"><option value="viewer">시청자</option><option value="host">호스트/레이블</option><option value="admin">관리자</option></select>
     </div>
-    <div class="auth row">
+    <div class="auth row" id="authBox">
       <button class="btn sm ghost" data-act="login">로그인</button>
       <button class="btn sm gold" data-act="signup">회원가입</button>
     </div>
   </div>
 </div>
-<div class="demo-bar">🔒 <b>시제품(프로토타입)</b> — 실제 결제·실제 방송·실제 로그인 없음. 모든 금액과 선물은 가상입니다.</div>
+<div class="demo-bar" id="demoBar">🔒 <b>베타</b> — 실제 결제 없음. 모든 금액과 선물은 가상 포인트입니다.</div>
 
 <main class="page" id="app"></main>
 
@@ -266,6 +267,9 @@ td.r, th.r { text-align: right; }
    ========================================================= */
 const CONFIG = {
   name: 'LIVE STAGE',
+  supabaseUrl: 'https://zomssaylcebzirpvprgq.supabase.co',
+  supabaseKey: 'sb_publishable_DNuVzh6ufm5w3vDidiJCdw_Aeux-DQ8',   // publishable(공개) 키. secret 키는 절대 여기 넣지 않음
+  serverStreamId: 's1',                                              // 서버(DB) 연동되는 방송 id
   currency: '스타',          // 가상 선물 단위
   krwPerStar: 100,           // 1스타 = 100원 (가상 환산, 예시)
   storageKey: 'livestage-proto-v1',
@@ -348,6 +352,58 @@ function save() { try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(S
 function resetAll() { try { localStorage.removeItem(CONFIG.storageKey); } catch (e) {} S = seed(); save(); render(); toast('샘플 데이터로 초기화했습니다'); }
 load();
 
+/* ---------- 서버(Supabase) ---------- */
+const sb = (window.supabase && CONFIG.supabaseUrl) ? window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey) : null;
+let ME = null;            // { id, nick, role, status }
+let AUTH_READY = false;
+const isServerStream = s => !!(sb && s && s.id === CONFIG.serverStreamId);
+async function loadMe() {
+  if (!sb) { AUTH_READY = true; return; }
+  const { data: { session } } = await sb.auth.getSession();
+  if (session?.user) {
+    const { data } = await sb.from('profiles').select('id,nick,role,status').eq('id', session.user.id).maybeSingle();
+    ME = data || { id: session.user.id, nick: session.user.user_metadata?.nick || session.user.email.split('@')[0], role: 'viewer', status: 'active' };
+    S.myName = ME.nick;
+  } else ME = null;
+  AUTH_READY = true; renderAuthBox();
+}
+function renderAuthBox() {
+  const b = $('#authBox'); if (!b) return;
+  b.innerHTML = ME
+    ? `<span class="pill ${ME.role==='admin'?'hot':ME.role==='host'?'new':'gray'}">${esc(ME.nick)}${ME.role!=='viewer'?' · '+{host:'호스트',moderator:'모더',admin:'관리자'}[ME.role]:''}</span><button class="btn sm ghost" data-act="logout">로그아웃</button>`
+    : `<button class="btn sm ghost" data-act="login">로그인</button><button class="btn sm gold" data-act="signup">회원가입</button>`;
+}
+function openAuth(mode) {
+  if (!sb) { toast('서버 미연결 — 데모 모드'); return; }
+  const signup = mode === 'signup';
+  modal(signup ? '회원가입' : '로그인', `
+    ${signup ? '<div class="lbl">닉네임 (채팅·선물에 표시)<input id="auNick" maxlength="16" placeholder="예: 별빛"></div>' : ''}
+    <div class="lbl">이메일<input id="auEmail" type="email" placeholder="you@example.com" autocomplete="email"></div>
+    <div class="lbl">비밀번호 (6자 이상)<input id="auPw" type="password" autocomplete="${signup?'new-password':'current-password'}"></div>
+    <div class="note" id="auMsg" hidden></div>`,
+    `<button class="btn ghost" data-close>닫기</button><button class="btn gold" id="auGo">${signup?'가입하기':'로그인'}</button>`);
+  const say = (t, ok) => { const m = $('#auMsg'); m.hidden = false; m.textContent = t; m.className = 'note' + (ok?' gold':''); };
+  $('#auGo').onclick = async () => {
+    const email = $('#auEmail').value.trim(), pw = $('#auPw').value;
+    if (!email || pw.length < 6) { say('이메일과 6자 이상 비밀번호를 입력하세요'); return; }
+    $('#auGo').disabled = true;
+    try {
+      if (signup) {
+        const nick = $('#auNick').value.trim(); if (!nick) { say('닉네임을 입력하세요'); $('#auGo').disabled = false; return; }
+        const { data, error } = await sb.auth.signUp({ email, password: pw, options: { data: { nick } } });
+        if (error) throw error;
+        if (!data.session) { say('가입 완료. 메일함의 인증 링크를 누른 뒤 로그인하세요.', true); $('#auGo').disabled = false; return; }
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+        if (error) throw error;
+      }
+      await loadMe(); closeModal(); toast(`${ME.nick} 님 환영합니다`); render();
+    } catch (e) { say(e.message.includes('Invalid login') ? '이메일 또는 비밀번호가 틀립니다' : e.message.includes('already registered') ? '이미 가입된 이메일입니다' : '오류: ' + e.message); $('#auGo').disabled = false; }
+  };
+  $('#auPw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auGo').click(); });
+}
+async function logout() { if (sb) await sb.auth.signOut(); ME = null; S.myName = '나(시청자)'; save(); renderAuthBox(); render(); toast('로그아웃했습니다'); }
+
 /* ---------- 공용 ---------- */
 const $ = sel => document.querySelector(sel);
 const app = $('#app');
@@ -381,7 +437,7 @@ function route() { const h = location.hash.slice(1); return ROUTES.includes(h) ?
 
 /* ---------- 렌더 ---------- */
 let liveTimers = [];
-function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; cancelAnimationFrame(rafId); if (hlsInst) { hlsInst.destroy(); hlsInst = null; } }
+function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; cancelAnimationFrame(rafId); if (hlsInst) { hlsInst.destroy(); hlsInst = null; } if (srvChannel && sb) { sb.removeChannel(srvChannel); srvChannel = null; } }
 function render() {
   stopLive();
   const r = route();
@@ -426,8 +482,21 @@ const CHAT_POOL = [
   ['응원단장','미유 1등 가즈아'],['호랑이','노래 신청 되나요'],['루나팬','왕관 간다 ㄱㄷ'],['익명','화질 좋네요'],['toto','처음 와봤는데 재밌다'],
   ['별빛','다음 라운드 언제 시작?'],['mimi','하트 10개 보냈어요 💛'],['달빛소녀','지미 사랑해 🐱'],['goldstar','순위 역전 가능?'],
 ];
+let srvChannel = null, syncedId = null;
+async function syncServerStream(s) {
+  // DB 의 출연자·상태·재생주소를 로컬 s 에 반영
+  const [{ data: st }, { data: pf }] = await Promise.all([
+    sb.from('streams').select('*').eq('id', s.id).maybeSingle(),
+    sb.from('performers').select('*').eq('stream_id', s.id).order('sort'),
+  ]);
+  if (st) { s.title = st.title; s.hostName = st.host_nick; s.status = st.status; if (st.play_url) s.playUrl = st.play_url; }
+  if (pf && pf.length) s.performers = pf.map(p => ({ id: p.id, name: p.name, emoji: p.emoji, total: Number(p.total) }));
+  save();
+}
 function renderLive() {
   const s = cur();
+  if (isServerStream(s) && syncedId !== s.id) { syncedId = s.id; syncServerStream(s).then(renderLive); app.innerHTML = '<div class="empty">서버에서 방송 정보를 불러오는 중…</div>'; return; }
+  syncedId = null;
   if (!s) { app.innerHTML = '<div class="empty">방송이 없습니다</div>'; return; }
   const lb = labelOf(s.labelId);
   const ended = s.status !== 'live';
@@ -456,9 +525,9 @@ function renderLive() {
         <div class="rank-list" id="rank"></div>
       </div>
       <div class="panel chat">
-        <div class="panel-h"><span>💬 채팅</span><small>가상 채팅 · 실시간 서버 미연결</small></div>
+        <div class="panel-h"><span>💬 채팅</span><small>${isServerStream(s) ? '실시간 · 서버 연결됨' : '가상 채팅 (샘플)'}</small></div>
         <div class="chat-log" id="chatLog"></div>
-        <div class="chat-in"><input id="chatIn" placeholder="${ended?'종료된 방송입니다':'메시지 입력…'}" ${ended?'disabled':''} maxlength="120"><button class="btn violet" data-act="send" ${ended?'disabled':''}>전송</button></div>
+        <div class="chat-in"><input id="chatIn" placeholder="${ended?'종료된 방송입니다':(isServerStream(s)&&!ME)?'로그인 후 채팅할 수 있습니다':'메시지 입력…'}" ${ended||(isServerStream(s)&&!ME)?'disabled':''} maxlength="200"><button class="btn violet" data-act="send" ${ended||(isServerStream(s)&&!ME)?'disabled':''}>전송</button></div>
         <div class="chat-hint">모더레이터: ${s.moderators.length ? s.moderators.map(esc).join(', ') : '없음'} · 차단한 이용자 ${S.blocked.length}명</div>
       </div>
     </div>`;
@@ -467,14 +536,34 @@ function renderLive() {
   const log = $('#chatLog');
   const addMsg = (u, t, cls='') => { if (S.blocked.includes(u)) return; const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = cls==='sys' ? esc(t) : `<span class="u">${esc(u)}</span>${esc(t)}`; log.appendChild(d); while (log.children.length > 80) log.firstChild.remove(); log.scrollTop = log.scrollHeight; };
   window.__addMsg = addMsg;
+  if (isServerStream(s)) {
+    addMsg('', `${esc(lb.name)} 채널 실시간 채팅입니다. ${ME ? '' : '로그인하면 참여할 수 있습니다.'}`, 'sys');
+    sb.from('messages').select('nick,text,kind,user_id').eq('stream_id', s.id).order('created_at', { ascending: false }).limit(40)
+      .then(({ data }) => (data||[]).reverse().forEach(m => addMsg(m.nick, m.text, m.kind==='gift'?'gift':(ME&&m.user_id===ME.id)?'me':'')));
+    if (srvChannel) sb.removeChannel(srvChannel);
+    srvChannel = sb.channel('live-'+s.id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'stream_id=eq.'+s.id }, ({ new: m }) => {
+        if (m.kind === 'gift' && ME && m.user_id === ME.id) return; // 내 선물은 이미 표시
+        addMsg(m.nick, m.text, m.kind==='gift'?'gift':(ME&&m.user_id===ME.id)?'me':'');
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'performers', filter: 'stream_id=eq.'+s.id }, ({ new: p }) => {
+        const lp = s.performers.find(x => x.id === p.id); if (!lp) return;
+        const diff = Number(p.total) - lp.total; lp.total = Number(p.total); save(); renderRank(s, diff>0 ? p.id : null);
+      })
+      .subscribe();
+    liveTimers.push(setInterval(() => { s.viewers = Math.max(1, s.viewers + Math.round((Math.random()-.45)*6)); const v = $('#vw'); if (v) v.textContent = '👁 ' + s.viewers.toLocaleString(); }, 5000));
+  } else {
   addMsg('', `${esc(lb.name)} 채널에 오신 것을 환영합니다. 가상 채팅이 자동으로 흐릅니다.`, 'sys');
   CHAT_POOL.slice(0,5).forEach(([u,t]) => addMsg(u,t));
-  if (!ended) {
+  }
+  if (!ended && !isServerStream(s)) {
     liveTimers.push(setInterval(() => { const [u,t] = CHAT_POOL[Math.floor(Math.random()*CHAT_POOL.length)]; addMsg(u,t, u==='우장군'?'mod':''); }, 2600));
     liveTimers.push(setInterval(() => { if (Math.random() < .35) { const g = GIFTS[Math.random()<.8?0:1]; const p = s.performers[Math.floor(Math.random()*s.performers.length)]; const [u] = CHAT_POOL[Math.floor(Math.random()*CHAT_POOL.length)]; gift(s, p.id, g, u, true); } }, 4000));
     liveTimers.push(setInterval(() => { s.viewers = Math.max(1, s.viewers + Math.round((Math.random()-.45)*20)); const v = $('#vw'); if (v) v.textContent = '👁 ' + s.viewers.toLocaleString(); }, 3000));
   }
-  const sendChat = () => { const i = $('#chatIn'); const t = i.value.trim(); if (!t) return; addMsg(S.myName, t, 'me'); i.value=''; };
+  const sendChat = async () => { const i = $('#chatIn'); const t = i.value.trim(); if (!t) return;
+    if (isServerStream(s)) { if (!ME) { openAuth('login'); return; } i.value=''; const { error } = await sb.rpc('send_message', { p_stream: s.id, p_text: t }); if (error) toast('전송 실패: ' + error.message); }
+    else { addMsg(S.myName, t, 'me'); i.value=''; } };
   $('#chatIn').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
   app.querySelector('[data-act=send]').addEventListener('click', sendChat);
 }
@@ -487,8 +576,17 @@ function renderRank(s, flashId) {
     <button class="gbtn" data-gift-to="${p.id}" ${s.status!=='live'?'disabled':''}>선물</button>
     <div class="bar"><i style="width:${Math.max(4, p.total/top*100)}%"></i></div></div>`).join('') || '<div class="empty">출연자가 없습니다</div>';
 }
-function gift(s, performerId, g, from, auto=false) {
+async function gift(s, performerId, g, from, auto=false) {
   const p = s.performers.find(x=>x.id===performerId); if (!p || s.status!=='live') return;
+  if (isServerStream(s) && !auto) {
+    if (!ME) { openAuth('login'); return; }
+    const { error } = await sb.rpc('send_gift', { p_stream: s.id, p_performer: performerId, p_gift: g.name, p_emoji: g.emoji, p_stars: g.stars });
+    if (error) { toast('선물 실패: ' + error.message); return; }
+    // 합계는 realtime UPDATE 로 반영됨; 알림만 즉시
+    const a = $('#alerts'); if (a) { const d = document.createElement('div'); d.className = 'gift-alert' + (g.stars>=1000?' big':''); d.textContent = `${g.emoji} ${from} 님이 ${p.name} 에게 ${g.name} (${STAR(g.stars)})`; a.appendChild(d); setTimeout(()=>d.remove(), g.stars>=1000?6000:3500); while (a.children.length>3) a.firstChild.remove(); }
+    window.__addMsg && window.__addMsg(from, `${g.emoji} ${p.name} 에게 ${g.name} ${STAR(g.stars)} 선물!`, 'gift');
+    return;
+  }
   p.total += g.stars;
   s.donations.push({ id: uid(), performerId: p.id, performerName: p.name, from, gift: g.name, emoji: g.emoji, stars: g.stars, at: Date.now() });
   save();
@@ -503,7 +601,7 @@ function openGift(s, preId) {
   const draw = () => {
     const g = GIFTS.find(x=>x.id===gid); const total = g.stars*qty;
     modal('🎁 선물 보내기 (가상)', `
-      <div class="note">실제 결제 없음 — 버튼을 누르면 가상 ${CONFIG.currency}만 반영됩니다. 실제 서비스에서는 PG 결제창이 여기서 열립니다.</div>
+      <div class="note">실제 결제 없음 — 가상 ${CONFIG.currency}만 반영됩니다.${isServerStream(s) ? ' 서버에 기록되어 모든 시청자에게 같은 순위가 보입니다.' : ''}</div>
       <div class="lbl">받을 출연자<div class="pick">${s.performers.map(p=>`<button data-p="${p.id}" class="${p.id===pid?'on':''}"><span class="e">${p.emoji}</span><span>${esc(p.name)}</span><span class="v num">${STAR(p.total)}</span></button>`).join('')}</div></div>
       <div class="lbl">선물 종류<div class="pick">${GIFTS.map(x=>`<button data-g="${x.id}" class="${x.id===gid?'on':''}"><span class="e">${x.emoji}</span><span>${x.name}</span><span class="v num">${x.stars}</span></button>`).join('')}</div></div>
       <div class="lbl">수량<div class="row">${[1,5,10,50].map(q=>`<button class="btn sm ${q===qty?'gold':''}" data-q="${q}">×${q}</button>`).join('')}</div></div>
@@ -513,7 +611,7 @@ function openGift(s, preId) {
     m.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{pid=b.dataset.p;draw();});
     m.querySelectorAll('[data-g]').forEach(b=>b.onclick=()=>{gid=b.dataset.g;draw();});
     m.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{qty=+b.dataset.q;draw();});
-    m.querySelector('[data-send-gift]').onclick = () => { const gg = { ...g, stars: g.stars*qty, name: qty>1?`${g.name} ×${qty}`:g.name }; gift(s, pid, gg, S.myName); closeModal(); toast(`${gg.emoji} 가상 선물을 보냈습니다`); };
+    m.querySelector('[data-send-gift]').onclick = () => { if (isServerStream(s) && !ME) { closeModal(); openAuth('login'); return; } const gg = { ...g, stars: g.stars*qty, name: qty>1?`${g.name} ×${qty}`:g.name }; gift(s, pid, gg, S.myName); closeModal(); toast(`${gg.emoji} 가상 선물을 보냈습니다`); };
   };
   draw();
 }
@@ -794,7 +892,9 @@ document.addEventListener('click', e => {
     case 'report': openReport(s); break;
     case 'block': openBlock(); break;
     case 'share': navigator.clipboard?.writeText(location.href).then(()=>toast('링크를 복사했습니다')).catch(()=>toast('이 환경에서는 복사가 막혀 있습니다')); break;
+    case 'logout': logout(); break;
     case 'login': case 'signup':
+      if (sb) { openAuth(t.dataset.act); break; }
       modal(t.dataset.act==='login'?'로그인 (시제품)':'회원가입 (시제품)', `<div class="note">실제 인증 서버가 없어 입력값은 저장되지 않습니다. 실제 서비스에서는 이메일/휴대폰 인증 + 소셜 로그인으로 연결합니다.</div>
         <div class="lbl">닉네임 (화면 표시용)<input id="nick" value="${esc(S.myName)}"></div>
         <div class="lbl">이메일<input type="email" placeholder="you@example.com"></div>
@@ -807,6 +907,8 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 $('#roleSel').addEventListener('change', e => { S.role = e.target.value; save(); go({viewer:'home',host:'studio',admin:'admin'}[S.role]); });
 render();
+loadMe().then(() => { if (route()==='live') render(); });
+if (sb) sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') { ME = null; renderAuthBox(); } });
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>
 </body>

@@ -21,3 +21,8 @@
 
 ## 비밀 값
 API 키·비밀번호는 코드에 넣지 않습니다. 서버는 `server/.env`(git 제외), 앱은 추후 Cloudflare Pages 환경변수로 관리합니다.
+
+## 서버 연동 (Supabase)
+- 스키마: `supabase/schema.sql` — SQL Editor 에 붙여넣어 실행
+- 앱의 `CONFIG.supabaseUrl / supabaseKey` 는 publishable(공개) 키. 쓰기는 전부 RLS + `send_message` / `send_gift` 함수로만 허용
+- 서버 연동 방송: `s1` (streams 테이블). 나머지 방송은 아직 로컬 샘플
