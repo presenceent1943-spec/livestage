@@ -5,7 +5,7 @@
 
 ## 1회 설정 (Supabase)
 1. SQL Editor → `supabase/schema_v2_payments.sql` 전체 실행
-2. Edge Functions → Deploy a new function → "Via Editor" → 이름 `confirm-payment` → `supabase/functions/confirm-payment/index.ts` 내용 붙여넣기 → Deploy
+2. Edge Functions → Deploy a new function → "Via Editor" → 이름은 자동 생성된 `super-handler` 사용 (앱 CONFIG.confirmFn 과 일치) → `supabase/functions/confirm-payment/index.ts` 내용 붙여넣기 → Deploy
 3. Edge Functions → Secrets → `TOSS_SECRET_KEY` = `test_gsk_docs_OaPz8L5KdmQXkzRz3y47BMw6` (문서용 테스트 비밀키) → Save
 4. Edge Functions → confirm-payment → Details → "Verify JWT" 는 켜진 상태 그대로
 
