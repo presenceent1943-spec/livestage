@@ -729,12 +729,12 @@ function playStream(url) {
   applyRot();
   const rb = $('#rotate'); if (rb) rb.onclick = () => { rot = (rot + 180) % 360; try { localStorage.setItem('ls-rot', rot); } catch(e) {} applyRot(); };
   if (window.Hls && Hls.isSupported()) {
-    hlsInst = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6, backBufferLength: 10 });
+    hlsInst = new Hls({ lowLatencyMode: false, liveSyncDurationCount: 3, backBufferLength: 10, manifestLoadingTimeOut: 20000, levelLoadingTimeOut: 20000, fragLoadingTimeOut: 30000, manifestLoadingMaxRetry: 6, levelLoadingMaxRetry: 6, fragLoadingMaxRetry: 6 });
     hlsInst.loadSource(url); hlsInst.attachMedia(v);
     hlsInst.on(Hls.Events.MANIFEST_PARSED, () => { retryN = 0; say(''); v.play().catch(()=>{}); });
     hlsInst.on(Hls.Events.ERROR, (_, d) => { if (!d.fatal) return;
       if (location.protocol==='https:' && url.startsWith('http:')) { say('보안 페이지(https)에서는 http 주소를 재생할 수 없습니다.'); return; }
-      retryN++; say(`방송 신호를 기다리는 중… (${retryN}) 송출이 시작되면 자동으로 재생됩니다`);
+      retryN++; say(`방송 신호를 기다리는 중… (${retryN}) [${d.type}/${d.details}${d.response?' HTTP '+d.response.code:''}] 송출이 시작되면 자동으로 재생됩니다`);
       liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); });
   } else if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = url; v.addEventListener('loadedmetadata', () => { say(''); v.play().catch(()=>{}); }); v.addEventListener('error', () => { retryN++; say(`방송 신호를 기다리는 중… (${retryN})`); liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); }); }
   else say('이 브라우저는 HLS 재생을 지원하지 않습니다.');
