@@ -366,7 +366,37 @@ load();
 const sb = (window.supabase && CONFIG.supabaseUrl) ? window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey) : null;
 let ME = null;            // { id, nick, role, status }
 let AUTH_READY = false;
-const isServerStream = s => !!(sb && s && s.id === CONFIG.serverStreamId);
+const isServerStream = s => !!(sb && s && s.fromServer);
+let SETTINGS = {};          // settings 테이블 (tunnel, server_ip)
+let STREAMS_SYNCED = false;
+/* DB 의 방송·출연자·레이블·설정을 로컬 S 로 동기화 (화면 코드는 S 를 그대로 씀) */
+async function syncAll() {
+  if (!sb) return;
+  const [{ data: st }, { data: pf }, { data: lb }, { data: cfg }, { data: gf }] = await Promise.all([
+    sb.from('streams').select('*').order('started_at', { ascending: false }),
+    sb.from('performers').select('*').order('sort'),
+    sb.from('labels').select('*'),
+    sb.from('settings').select('*'),
+    sb.from('gifts').select('stream_id,performer_id,nick,gift,emoji,stars,created_at').order('created_at', { ascending: false }).limit(500),
+  ]);
+  if (!st) return;
+  SETTINGS = Object.fromEntries((cfg||[]).map(r => [r.key, r.value]));
+  if (lb && lb.length) S.labels = lb.map(l => ({ id: l.id, name: l.name, owner: '', joinedAt: +new Date(l.created_at), status: l.status, hosts: 0 }));
+  const old = Object.fromEntries(S.streams.map(x => [x.id, x]));
+  S.streams = st.map(r => {
+    const o = old[r.id] || {};
+    const perf = (pf||[]).filter(x => x.stream_id === r.id && x.sort >= 0).map(x => ({ id: x.id, name: x.name, emoji: x.emoji, total: Number(x.total) }));
+    const pname = Object.fromEntries((pf||[]).filter(x => x.stream_id === r.id).map(x => [x.id, x.name]));
+    const don = (gf||[]).filter(g => g.stream_id === r.id).map(g => ({ id: g.created_at, performerId: g.performer_id, performerName: pname[g.performer_id] || '?', from: g.nick, gift: g.gift, emoji: g.emoji, stars: g.stars, at: +new Date(g.created_at) })).reverse();
+    return { id: r.id, fromServer: true, title: r.title, labelId: r.label_id || 'presence', hostName: r.host_nick, ownerId: r.owner_id, category: r.category || '토크', hue: r.hue ?? 270, emoji: r.emoji || '🎤',
+      viewers: o.viewers ?? (10 + Math.floor(Math.random()*40)), status: r.status, playUrl: r.play_url || '', startedAt: +new Date(r.started_at || r.created_at), isNew: (Date.now() - +new Date(r.started_at || r.created_at)) < 3600000*3,
+      performers: perf, moderators: o.moderators || [], donations: don };
+  });
+  if (!S.streams.find(x => x.id === S.currentStreamId)) S.currentStreamId = (S.streams.find(x => x.status==='live') || S.streams[0] || {}).id;
+  if (!S.streams.find(x => x.id === S.studioStreamId)) S.studioStreamId = S.currentStreamId;
+  STREAMS_SYNCED = true; save();
+}
+const canManage = s => !!(ME && s && (ME.role === 'admin' || s.ownerId === ME.id));
 async function loadMe() {
   if (!sb) { AUTH_READY = true; return; }
   const { data: { session } } = await sb.auth.getSession();
@@ -520,6 +550,7 @@ function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; cancel
 function render() {
   stopLive();
   const r = route();
+  if (sb && !STREAMS_SYNCED) { app.innerHTML = '<div class="empty">서버에서 방송 목록을 불러오는 중…</div>'; syncAll().then(() => { STREAMS_SYNCED = true; render(); }).catch(() => { STREAMS_SYNCED = true; render(); }); return; }
   document.querySelectorAll('[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === r));
   $('#roleSel').value = S.role;
   $('#brandName').textContent = CONFIG.name;
@@ -531,6 +562,7 @@ function render() {
 /* ===== 1. 홈 ===== */
 let homeQ = '', homeCat = '전체';
 function renderHome() {
+  if (sb && !renderHome._fresh) { renderHome._fresh = true; setTimeout(()=>renderHome._fresh=false, 15000); syncAll().then(()=>{ if (route()==='home') renderHome(); }); }
   const liveStreams = S.streams.filter(s => s.status === 'live');
   const f = liveStreams.filter(s => (homeCat==='전체' || s.category===homeCat) && (!homeQ || (s.title+s.hostName+labelOf(s.labelId).name).toLowerCase().includes(homeQ.toLowerCase())));
   const hot = f.filter(s => !s.isNew).sort((a,b)=>b.viewers-a.viewers);
@@ -551,7 +583,7 @@ function renderHome() {
     ${hot.length ? `<div class="grid">${hot.map(s=>card(s, s.viewers>1000?'<span class="pill hot">🔥 HOT</span>':'')).join('')}</div>` : '<div class="empty">조건에 맞는 인기 방송이 없습니다</div>'}
     <div class="sec-h"><span class="eyebrow">New</span><h2>신규 방송</h2><span class="cnt num">${fresh.length}개</span></div>
     ${fresh.length ? `<div class="grid">${fresh.map(s=>card(s,'<span class="pill new">NEW</span>')).join('')}</div>` : '<div class="empty">조건에 맞는 신규 방송이 없습니다</div>'}
-    <p style="color:var(--fg-3);font-size:12px;margin-top:28px">시청자 수와 썸네일은 샘플입니다. 카드를 누르면 라이브 화면으로 이동합니다.</p>`;
+    <p style="color:var(--fg-3);font-size:12px;margin-top:28px">${sb ? '방송 목록은 서버 기준입니다. 시청자 수는 아직 추정치입니다.' : '시청자 수와 썸네일은 샘플입니다.'} 카드를 누르면 라이브 화면으로 이동합니다.</p>`;
   $('#homeQ').addEventListener('input', e => { homeQ = e.target.value; renderHome(); const i=$('#homeQ'); i.focus(); i.setSelectionRange(i.value.length,i.value.length); });
 }
 
@@ -565,6 +597,7 @@ let srvChannel = null, syncedId = null;
 async function pushStreamToServer(s) {
   if (!isServerStream(s)) return;
   if (!ME) { toast('서버 저장은 로그인(호스트/관리자) 필요 — 이 기기에만 저장됨'); return; }
+  if (!canManage(s)) { toast('이 방송의 호스트 또는 관리자만 변경할 수 있습니다'); return; }
   const { error } = await sb.rpc('set_stream', { p_stream: s.id, p_play_url: s.playUrl || '', p_title: s.title, p_status: s.status });
   if (error) toast('서버 저장 실패: ' + error.message); else toast('서버에 저장됨 — 모든 기기에서 같은 영상이 보입니다');
 }
@@ -580,7 +613,7 @@ async function syncServerStream(s) {
 }
 function renderLive() {
   const s = cur();
-  if (isServerStream(s) && syncedId !== s.id) { syncedId = s.id; syncServerStream(s).then(renderLive); app.innerHTML = '<div class="empty">서버에서 방송 정보를 불러오는 중…</div>'; return; }
+  if (isServerStream(s) && syncedId !== s.id) { syncedId = s.id; syncAll().then(renderLive); app.innerHTML = '<div class="empty">서버에서 방송 정보를 불러오는 중…</div>'; return; }
   syncedId = null;
   if (!s) { app.innerHTML = '<div class="empty">방송이 없습니다</div>'; return; }
   const lb = labelOf(s.labelId);
@@ -758,8 +791,11 @@ let rafId = 0;
 
 /* ===== 3. 스튜디오 (호스트·레이블) ===== */
 function renderStudio() {
-  const mine = S.streams; // 시제품: 모든 방송을 호스트 권한으로 조작 가능
-  let s = mine.find(x=>x.id===S.studioStreamId) || mine[0];
+  if (sb && !ME) { app.innerHTML = '<div class="empty">스튜디오는 로그인 후 사용할 수 있습니다.<br><br><button class="btn gold" data-act="login">로그인</button></div>'; return; }
+  if (sb && ME.role === 'viewer') { app.innerHTML = '<div class="empty">호스트 권한이 필요합니다. 관리자에게 호스트 등록을 요청하세요.</div>'; return; }
+  const mine = sb ? S.streams.filter(x => canManage(x)) : S.streams;
+  if (!mine.length) S.studioTab = 'create';
+  let s = mine.find(x=>x.id===S.studioStreamId) || mine[0] || { id:'', title:'(방송 없음)', labelId:'presence', hostName: ME?.nick||'', category:'토크', hue:270, emoji:'🎤', viewers:0, status:'ended', performers:[], moderators:[], donations:[], playUrl:'' };
   const tabs = [['overview','대시보드'],['golive','📡 방송 켜기'],['create','방송 생성'],['settings','방송 설정'],['performers','출연자 관리'],['donations','후원 내역'],['mods','모더레이터']];
   const totalStars = s.performers.reduce((a,p)=>a+p.total,0);
   const body = {
@@ -775,11 +811,11 @@ function renderStudio() {
       ${ranked(s).map((p,i)=>`<tr><td class="num">${i+1}</td><td>${p.emoji} ${esc(p.name)}</td><td class="r num">${p.total.toLocaleString()}</td><td class="r num">${KRW(p.total*CONFIG.krwPerStar)}</td><td class="r num">${s.donations.filter(d=>d.performerId===p.id).length}</td></tr>`).join('')}</table></div>
       <div class="row" style="margin-top:16px">
         <button class="btn" data-go="live" data-view="${s.id}">▶ 시청자 화면으로 보기</button>
-        ${s.status==='live' ? `<button class="btn danger" id="endStream">⏹ 방송 종료</button>` : `<button class="btn gold" id="restart">다시 방송 시작 (시제품)</button>`}
+        ${s.status==='live' ? `<button class="btn danger" id="endStream">⏹ 방송 종료</button>` : `<button class="btn gold" id="restart">다시 방송 시작</button>`}
       </div>`,
     golive: () => {
-      const srv = S.server || { ip: '', path: 'live/stream', tunnel: '' };
-      const ip = srv.ip || '192.168.x.x';
+      const srv = { ip: SETTINGS.server_ip || (S.server||{}).ip || '', path: 'live/' + s.id, tunnel: SETTINGS.tunnel || (S.server||{}).tunnel || '' };
+      const ip = srv.ip || '서버IP';
       const tun = (srv.tunnel||'').replace(/\/$/,'');
       return `
       <div class="form">
@@ -788,18 +824,18 @@ function renderStudio() {
           <div class="lbl">① 터널 주소 (2_start_tunnel 창의 https://…trycloudflare.com)<input id="svTunnel" value="${esc(srv.tunnel||'')}" placeholder="https://xxxx-xxxx.trycloudflare.com"></div>
           <div class="lbl">② PC 내부 IP (1_start_server 창의 IPv4)<input id="svIp" value="${esc(srv.ip||'')}" placeholder="192.168.45.80"></div>
         </div>
-        <div class="lbl">경로 (기본값 그대로)<input id="svPath" value="${esc(srv.path||'live/stream')}"></div>
-        <button class="btn gold" id="svSave" style="justify-self:start">저장하고 이 방송에 연결</button>
-        ${tun ? `<div class="note">연결됨 · 재생 주소 <code>${esc(tun)}/${esc(srv.path)}/index.m3u8</code></div>` : ''}
+        <button class="btn gold" id="svSave" style="justify-self:start">저장 (모든 라이브 방송에 적용)</button>
+        ${s.playUrl ? `<div class="note">이 방송 재생 주소 <code>${esc(s.playUrl)}</code></div>` : '<div class="note">아직 재생 주소 없음 — 위 터널 주소를 저장하면 자동 연결됩니다</div>'}
+        <div class="note gold">이 방송의 송출 경로는 <code>${esc(srv.path)}</code> 입니다. 방송마다 경로가 달라서 여러 레이블이 같은 서버로 동시에 송출할 수 있습니다.</div>
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">폰 — Larix Broadcaster</h2></div>
         <div class="tbl-wrap"><table>
-          <tr><th style="width:140px">URL</th><td><code>rtmp://${esc(ip)}:1935/${esc(srv.path||'live/stream')}</code></td></tr>
+          <tr><th style="width:140px">URL</th><td><code>rtmp://${esc(ip)}:1935/${esc(srv.path)}</code></td></tr>
           <tr><th>조건</th><td>IP가 192.168.x.x 면 <b>같은 와이파이</b>에서만, 공인 IP(그 외)면 <b>LTE 어디서든</b> 송출 가능 · Target type: Default · 테스트 모드라 비밀번호 없음</td></tr>
         </table></div>
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">PC — OBS Studio</h2></div>
         <div class="tbl-wrap"><table>
-          <tr><th style="width:140px">서버</th><td><code>rtmp://localhost:1935/live</code></td></tr>
-          <tr><th>스트림 키</th><td><code>stream</code></td></tr>
+          <tr><th style="width:140px">서버</th><td><code>rtmp://${esc(ip)}:1935/live</code></td></tr>
+          <tr><th>스트림 키</th><td><code>${esc(s.id)}</code></td></tr>
           <tr><th>출력 권장</th><td>1280×720 · 30fps · 2500~3500 kbps · 키프레임 1~2초</td></tr>
         </table></div>
         <div class="note">터널 주소는 2_start_tunnel 을 다시 켤 때마다 바뀝니다. 방송 전 ①만 새로 넣으면 됩니다. 외부 공개 전엔 서버 비밀번호를 다시 켭니다.</div>
@@ -807,9 +843,9 @@ function renderStudio() {
     },
     create: () => `
       <div class="form">
-        <div class="note">방송 생성 시 실제 서비스에서는 <b>스트림 키</b>가 발급되어 OBS에 입력합니다. 시제품에서는 샘플 방송이 만들어집니다.</div>
+        <div class="note">방송을 만들면 <b>전용 송출 경로(live/방송ID)</b>가 발급됩니다. 생성 후 "📡 방송 켜기" 탭에서 OBS·폰 설정값을 확인하세요.</div>
         <div class="lbl">방송 제목<input id="cTitle" placeholder="예: 토요일 밤 합동 노래 라이브"></div>
-        <div class="two"><div class="lbl">호스트 이름<input id="cHost" placeholder="예: 미유"></div>
+        <div class="two"><div class="lbl">호스트 이름<input id="cHost" value="${esc(ME?.nick||'')}" placeholder="예: 미유"></div>
         <div class="lbl">레이블<select id="cLabel">${S.labels.filter(l=>l.status==='active').map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div></div>
         <div class="two"><div class="lbl">카테고리<select id="cCat">${CATEGORIES.slice(1).map(c=>`<option>${c}</option>`).join('')}</select></div>
         <div class="lbl">첫 출연자 (쉼표로 구분)<input id="cPerf" placeholder="예: 미유, 리나, 우기"></div></div>
@@ -861,25 +897,34 @@ function renderStudio() {
     <section style="min-width:0"><div class="sec-h" style="margin-top:0"><span class="eyebrow">Studio</span><h2>${tabs.find(t=>t[0]===S.studioTab)[1]}</h2><span class="cnt">${esc(labelOf(s.labelId).name)} · ${esc(s.title)}</span></div>${body}</section></div>`;
   $('#stSel').onchange = e => { S.studioStreamId = e.target.value; save(); renderStudio(); };
   app.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{ S.studioTab=b.dataset.tab; save(); renderStudio(); });
-  const endBtn = $('#endStream'); if (endBtn) endBtn.onclick = () => confirmBox('방송을 종료할까요?', '종료 후 후원 내역은 정산 화면에 그대로 남습니다.', () => { s.status='ended'; s.viewers=0; save(); pushStreamToServer(s); renderStudio(); toast('방송을 종료했습니다'); });
-  const rs = $('#restart'); if (rs) rs.onclick = () => { s.status='live'; s.viewers=10; s.startedAt=Date.now(); save(); pushStreamToServer(s); renderStudio(); };
+  const endBtn = $('#endStream'); if (endBtn) endBtn.onclick = () => confirmBox('방송을 종료할까요?', '종료 후 후원 내역은 정산 화면에 그대로 남습니다.', async () => { s.status='ended'; s.viewers=0; save(); await pushStreamToServer(s); STREAMS_SYNCED = false; await syncAll(); renderStudio(); toast('방송을 종료했습니다'); });
+  const rs = $('#restart'); if (rs) rs.onclick = async () => { s.status='live'; s.viewers=10; s.startedAt=Date.now(); save(); await pushStreamToServer(s); STREAMS_SYNCED = false; await syncAll(); renderStudio(); };
   // 생성
   let hue = s.hue, emo = s.emoji; if (S.studioTab==='create') { hue = 270; emo = '🎤'; }
   app.querySelectorAll('[data-hue]').forEach(b=>b.onclick=()=>{ hue=+b.dataset.hue; app.querySelectorAll('[data-hue]').forEach(x=>x.classList.toggle('on',x===b)); const p=$('#ePrev'); if(p) p.style.cssText = grad(hue)+'border-radius:10px;max-width:280px;font-size:40px'; });
   app.querySelectorAll('[data-emo]').forEach(b=>b.onclick=()=>{ emo=b.dataset.emo; app.querySelectorAll('[data-emo]').forEach(x=>x.classList.toggle('on',x===b)); const p=$('#ePrev'); if(p) p.textContent = emo; });
-  const mk = $('#cMake'); if (mk) mk.onclick = () => {
+  const mk = $('#cMake'); if (mk) mk.onclick = async () => {
     const title = $('#cTitle').value.trim(), host = $('#cHost').value.trim();
     if (!title || !host) { toast('제목과 호스트 이름을 입력하세요'); return; }
     if (!$('#cAgree').checked) { toast('가이드라인 동의가 필요합니다'); return; }
     const perfs = $('#cPerf').value.split(',').map(x=>x.trim()).filter(Boolean); if (!perfs.includes(host)) perfs.unshift(host);
+    if (sb) { mk.disabled = true; const { data, error } = await sb.rpc('create_stream', { p_title: title, p_category: $('#cCat').value, p_emoji: emo, p_hue: hue, p_performers: perfs, p_label: $('#cLabel').value });
+      if (error) { toast('생성 실패: ' + error.message); mk.disabled = false; return; }
+      STREAMS_SYNCED = false; await syncAll(); S.studioStreamId = data; S.currentStreamId = data; S.studioTab = 'golive'; save(); renderStudio(); toast('방송 생성 완료 — 송출 설정을 확인하세요'); return; }
     const ns = { id: uid(), title, labelId: $('#cLabel').value, hostName: host, category: $('#cCat').value, hue, emoji: emo, viewers: 1, status:'live', startedAt: Date.now(), isNew: true,
       performers: perfs.map((n,i)=>({ id: uid(), name: n, emoji: EMOJIS[i%EMOJIS.length], total: 0 })), moderators: [], donations: [] };
     S.streams.unshift(ns); S.studioStreamId = ns.id; S.currentStreamId = ns.id; S.studioTab = 'overview'; save(); renderStudio(); toast('방송이 생성되었습니다 (홈에 신규로 표시)');
   };
-  const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); pushStreamToServer(s); renderStudio(); toast('저장했습니다'); };
-  const sv = $('#svSave'); if (sv) sv.onclick = () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); const path = ($('#svPath').value.trim() || 'live/stream').replace(/^\/|\/$/g,''); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; } S.server = { ip, path, tunnel }; s.playUrl = `${tunnel}/${path}/index.m3u8`; save(); pushStreamToServer(s); renderStudio(); toast('이 방송이 실제 송출에 연결되었습니다 → 라이브 탭에서 확인'); };
-  const pa = $('#pAdd'); if (pa) pa.onclick = () => { const n = $('#pName').value.trim(); if (!n) return; s.performers.push({ id: uid(), name: n, emoji: $('#pEmo').value, total: 0 }); save(); renderStudio(); };
-  app.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ s.performers = s.performers.filter(p=>p.id!==b.dataset.del); save(); renderStudio(); });
+  const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); pushStreamToServer(s).then(()=>{ STREAMS_SYNCED=false; syncAll().then(renderStudio); }); toast('저장했습니다'); };
+  const sv = $('#svSave'); if (sv) sv.onclick = async () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; }
+    if (sb) { const r1 = await sb.rpc('apply_tunnel', { p_tunnel: tunnel }); if (r1.error) { toast('저장 실패: ' + r1.error.message); return; } if (ip) await sb.rpc('set_setting', { p_key: 'server_ip', p_value: ip }); STREAMS_SYNCED = false; await syncAll(); toast('서버에 저장됨 — 모든 라이브 방송이 이 주소로 연결됩니다'); renderStudio(); }
+    else { S.server = { ip, tunnel }; s.playUrl = `${tunnel}/live/${s.id}/index.m3u8`; save(); renderStudio(); } };
+  const pa = $('#pAdd'); if (pa) pa.onclick = async () => { const n = $('#pName').value.trim(); if (!n) return;
+    if (sb) { const { error } = await sb.rpc('add_performer', { p_stream: s.id, p_name: n, p_emoji: $('#pEmo').value }); if (error) { toast('추가 실패: ' + error.message); return; } STREAMS_SYNCED = false; await syncAll(); renderStudio(); return; }
+    s.performers.push({ id: uid(), name: n, emoji: $('#pEmo').value, total: 0 }); save(); renderStudio(); };
+  app.querySelectorAll('[data-del]').forEach(b=>b.onclick=async ()=>{
+    if (sb) { const { error } = await sb.rpc('remove_performer', { p_stream: s.id, p_performer: b.dataset.del }); if (error) { toast('삭제 실패: ' + error.message); return; } STREAMS_SYNCED = false; await syncAll(); renderStudio(); return; }
+    s.performers = s.performers.filter(p=>p.id!==b.dataset.del); save(); renderStudio(); });
   const ma = $('#mAdd'); if (ma) ma.onclick = () => { const n = $('#mName').value.trim(); if (n && !s.moderators.includes(n)) s.moderators.push(n); save(); renderStudio(); };
   app.querySelectorAll('[data-unmod]').forEach(b=>b.onclick=()=>{ s.moderators = s.moderators.filter(m=>m!==b.dataset.unmod); save(); renderStudio(); });
 }
