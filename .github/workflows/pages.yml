@@ -19,6 +19,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # v2 미리보기: v2-demo 브랜치를 /v2/ 하위 경로로 함께 배포 (기존 사이트는 그대로)
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-demo
+          path: v2
+      - run: rm -rf v2/.git v2/.github
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
