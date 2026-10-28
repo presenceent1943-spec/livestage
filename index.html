@@ -365,6 +365,9 @@ load();
 /* ---------- 서버(Supabase) ---------- */
 const sb = (window.supabase && CONFIG.supabaseUrl) ? window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey) : null;
 let ME = null;            // { id, nick, role, status }
+let PUBLISH_PASS = '';     // 송출 비밀번호 (호스트/관리자만 서버에서 받음)
+async function loadPublishPass() { if (!sb || !ME || !['host','admin'].includes(ME.role)) { PUBLISH_PASS = ''; return; } try { const { data } = await sb.rpc('get_publish_pass'); PUBLISH_PASS = data || ''; } catch(e) { PUBLISH_PASS = ''; } }
+const publishAuthHeader = () => PUBLISH_PASS ? { 'Authorization': 'Basic ' + btoa('presence:' + PUBLISH_PASS) } : {};
 let AUTH_READY = false;
 const isServerStream = s => !!(sb && s && s.fromServer);
 let SETTINGS = {};          // settings 테이블 (tunnel, server_ip)
@@ -405,7 +408,7 @@ async function loadMe() {
     ME = data || { id: session.user.id, nick: session.user.user_metadata?.nick || session.user.email.split('@')[0], role: 'viewer', status: 'active' };
     ME.email = session.user.email; S.myName = ME.nick;
   } else ME = null;
-  AUTH_READY = true; renderAuthBox(); loadWallet();
+  AUTH_READY = true; renderAuthBox(); loadWallet(); loadPublishPass();
 }
 let WALLET = null;      // 잔액(스타)
 let walletChan = null;
@@ -522,6 +525,7 @@ function camDraw() {
   loop();
 }
 async function camStart(s) {
+  camState.wantOn = true; camState.sid = s.id; clearTimeout(camState.retryT);
   const base = (SETTINGS.whip_tunnel || '').replace(/\/$/,'');
   if (!base) { camSay('방송 켜기 탭 ③에 카메라 송출용 터널 주소를 먼저 저장하세요'); return; }
   if (!camState.raw) await camOpen($('#camSel').value);
@@ -544,8 +548,9 @@ async function camStart(s) {
   await new Promise(r => { if (pc.iceGatheringState === 'complete') r(); else { const t = setTimeout(r, 2500); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); r(); } }; } });
   camSay('서버 연결 중…');
   let res;
-  try { res = await fetch(`${base}/live/${s.id}/whip`, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp }); }
+  try { res = await fetch(`${base}/live/${s.id}/whip`, { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...publishAuthHeader() }, body: pc.localDescription.sdp }); }
   catch (e) { camSay('서버에 연결할 수 없습니다 (터널 주소·3_start_tunnel_webcam 창 확인)'); pc.close(); return; }
+  if (res.status === 401 || res.status === 403) { await loadPublishPass(); camSay('송출 비밀번호가 맞지 않습니다 — PC의 password.txt 와 START 창을 확인하세요'); pc.close(); return; }
   if (!res.ok) { camSay(`서버 거절 (HTTP ${res.status}) — 서버 설정의 webrtc 항목 확인`); pc.close(); return; }
   const answer = await res.text(); const loc = res.headers.get('Location');
   camState.whipUrl = loc ? (loc.startsWith('http') ? loc : base + loc) : null;
@@ -555,10 +560,23 @@ async function camStart(s) {
   camState.capTrack = cs.getVideoTracks()[0]; camState.rawTrack = camState.raw.getVideoTracks()[0];
   camState.onVis = () => { const sn = pc.getSenders().find(x => x.track && x.track.kind === 'video') || pc.getSenders().find(x => !x.track); if (!sn) return; const t = document.hidden ? camState.rawTrack : camState.capTrack; if (sn.track !== t) sn.replaceTrack(t).catch(()=>{}); };
   document.addEventListener('visibilitychange', camState.onVis); camState.onVis();
-  pc.onconnectionstatechange = () => { camSay('연결 상태: ' + pc.connectionState); if (['failed','disconnected','closed'].includes(pc.connectionState)) { camState.on = false; const b = $('#camBadge'); if (b) { b.className='pill gray'; b.textContent='대기'; } } };
+  pc.onconnectionstatechange = () => { camSay('연결 상태: ' + pc.connectionState); if (['failed','disconnected','closed'].includes(pc.connectionState)) { camState.on = false; const b = $('#camBadge'); if (b) { b.className='pill gray'; b.textContent='대기'; } if (camState.wantOn && camState.pc === pc) camReconnect(); } };
   camSay('송출 중 — 라이브 탭에서 확인하세요'); renderStudio(); camDraw();
 }
+// 끊기면 5초 뒤 자동 재연결 (서버 재시작으로 터널 주소가 바뀐 경우도 새 주소를 받아 다시 연결)
+function camReconnect() {
+  clearTimeout(camState.retryT); camState.retryN = (camState.retryN || 0) + 1;
+  camSay(`연결 끊김 — 5초 뒤 자동 재연결 (${camState.retryN})`);
+  camState.retryT = setTimeout(async () => {
+    if (!camState.wantOn) return;
+    try { if (camState.pc) camState.pc.close(); } catch(e) {} camState.pc = null; camState.whipUrl = null;
+    try { await syncAll(); } catch(e) {}
+    const s = S.streams.find(x => x.id === camState.sid); if (!s) { camState.wantOn = false; return; }
+    try { await camStart(s); camState.retryN = 0; } catch(e) { camReconnect(); }
+  }, 5000);
+}
 async function camStop() {
+  camState.wantOn = false; clearTimeout(camState.retryT); camState.retryN = 0;
   try { if (camState.whipUrl) await fetch(camState.whipUrl, { method: 'DELETE' }); } catch(e) {}
   if (camState.onVis) { document.removeEventListener('visibilitychange', camState.onVis); camState.onVis = null; }
   if (camState.pc) camState.pc.close(); camState.pc = null; camState.on = false; camState.whipUrl = null;
@@ -881,7 +899,7 @@ function playStream(url) {
     hlsInst.on(Hls.Events.ERROR, (_, d) => { if (!d.fatal) return;
       if (location.protocol==='https:' && url.startsWith('http:')) { say('보안 페이지(https)에서는 http 주소를 재생할 수 없습니다.'); return; }
       retryN++; say(`방송 신호를 기다리는 중… (${retryN}) [${d.type}/${d.details}${d.response?' HTTP '+d.response.code:''}] 송출이 시작되면 자동으로 재생됩니다`);
-      liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); });
+      liveTimers.push(setTimeout(async () => { if (!document.body.contains(v)) return; let u = url; if (sb && retryN % 3 === 0) { try { await syncAll(); const cs = S.streams.find(x => x.id === S.currentStreamId); if (cs?.playUrl) u = cs.playUrl; } catch(e) {} } playStream(u); }, 5000)); });
   } else if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = url; v.addEventListener('loadedmetadata', () => { say(''); v.play().catch(()=>{}); }); v.addEventListener('error', () => { retryN++; say(`방송 신호를 기다리는 중… (${retryN})`); liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); }); }
   else say('이 브라우저는 HLS 재생을 지원하지 않습니다.');
 }
@@ -944,15 +962,16 @@ function renderStudio() {
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">폰 — Larix Broadcaster</h2></div>
         <div class="tbl-wrap"><table>
           <tr><th style="width:140px">URL</th><td><code>rtmp://${esc(ip)}:1935/${esc(srv.path)}</code></td></tr>
-          <tr><th>조건</th><td>IP가 192.168.x.x 면 <b>같은 와이파이</b>에서만, 공인 IP(그 외)면 <b>LTE 어디서든</b> 송출 가능 · Target type: Default · 테스트 모드라 비밀번호 없음</td></tr>
+          <tr><th>로그인</th><td>아이디 <code>presence</code> · 비밀번호 <code>${PUBLISH_PASS ? esc(PUBLISH_PASS) : '(START 창을 켜면 자동 등록)'}</code></td></tr>
+          <tr><th>조건</th><td>IP가 192.168.x.x 면 <b>같은 와이파이</b>에서만, 공인 IP(그 외)면 <b>LTE 어디서든</b> 송출 가능 · Target type: Default</td></tr>
         </table></div>
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">PC — OBS Studio</h2></div>
         <div class="tbl-wrap"><table>
           <tr><th style="width:140px">서버</th><td><code>rtmp://${esc(ip)}:1935/live</code></td></tr>
-          <tr><th>스트림 키</th><td><code>${esc(s.id)}</code></td></tr>
+          <tr><th>스트림 키</th><td><code>${esc(s.id)}?user=presence&pass=${PUBLISH_PASS ? esc(PUBLISH_PASS) : '비밀번호'}</code></td></tr>
           <tr><th>출력 권장</th><td>1280×720 · 30fps · 2500~3500 kbps · 키프레임 1~2초</td></tr>
         </table></div>
-        <div class="note">터널 주소는 2_start_tunnel 을 다시 켤 때마다 바뀝니다. 방송 전 ①만 새로 넣으면 됩니다. 외부 공개 전엔 서버 비밀번호를 다시 켭니다.</div>
+        <div class="note">START.bat 하나만 켜면 터널 주소·송출 비밀번호가 자동 등록됩니다. 비밀번호는 PC의 password.txt 에서 바꿀 수 있습니다.</div>
       </div>`;
     },
     cam: () => `

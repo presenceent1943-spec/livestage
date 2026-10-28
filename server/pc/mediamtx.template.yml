@@ -1,0 +1,39 @@
+# LIVE STAGE - MediaMTX (PC 서버). start.ps1 이 password.txt 를 읽어 __PASS__ 를 채워 mediamtx.yml 로 만듭니다.
+# 송출(publish)은 비밀번호 필요, 시청(read)은 누구나.
+logLevel: info
+authMethod: internal
+authInternalUsers:
+  - user: presence
+    pass: __PASS__
+    permissions:
+      - action: publish
+        path: ""
+  - user: any
+    pass:
+    permissions:
+      - action: read
+        path: ""
+      - action: playback
+        path: ""
+rtmp: yes
+rtmpAddress: :1935
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ['*']
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+rtsp: no
+srt: no
+paths:
+  all_others:
+    source: publisher
