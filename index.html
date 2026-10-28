@@ -562,13 +562,19 @@ const CHAT_POOL = [
   ['별빛','다음 라운드 언제 시작?'],['mimi','하트 10개 보냈어요 💛'],['달빛소녀','지미 사랑해 🐱'],['goldstar','순위 역전 가능?'],
 ];
 let srvChannel = null, syncedId = null;
+async function pushStreamToServer(s) {
+  if (!isServerStream(s)) return;
+  if (!ME) { toast('서버 저장은 로그인(호스트/관리자) 필요 — 이 기기에만 저장됨'); return; }
+  const { error } = await sb.rpc('set_stream', { p_stream: s.id, p_play_url: s.playUrl || '', p_title: s.title, p_status: s.status });
+  if (error) toast('서버 저장 실패: ' + error.message); else toast('서버에 저장됨 — 모든 기기에서 같은 영상이 보입니다');
+}
 async function syncServerStream(s) {
   // DB 의 출연자·상태·재생주소를 로컬 s 에 반영
   const [{ data: st }, { data: pf }] = await Promise.all([
     sb.from('streams').select('*').eq('id', s.id).maybeSingle(),
     sb.from('performers').select('*').eq('stream_id', s.id).order('sort'),
   ]);
-  if (st) { s.title = st.title; s.hostName = st.host_nick; s.status = st.status; if (st.play_url) s.playUrl = st.play_url; }
+  if (st) { s.title = st.title; s.hostName = st.host_nick; s.status = st.status; s.playUrl = st.play_url || ''; }
   if (pf && pf.length) s.performers = pf.map(p => ({ id: p.id, name: p.name, emoji: p.emoji, total: Number(p.total) }));
   save();
 }
@@ -852,8 +858,8 @@ function renderStudio() {
     <section style="min-width:0"><div class="sec-h" style="margin-top:0"><span class="eyebrow">Studio</span><h2>${tabs.find(t=>t[0]===S.studioTab)[1]}</h2><span class="cnt">${esc(labelOf(s.labelId).name)} · ${esc(s.title)}</span></div>${body}</section></div>`;
   $('#stSel').onchange = e => { S.studioStreamId = e.target.value; save(); renderStudio(); };
   app.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{ S.studioTab=b.dataset.tab; save(); renderStudio(); });
-  const endBtn = $('#endStream'); if (endBtn) endBtn.onclick = () => confirmBox('방송을 종료할까요?', '종료 후 후원 내역은 정산 화면에 그대로 남습니다.', () => { s.status='ended'; s.viewers=0; save(); renderStudio(); toast('방송을 종료했습니다'); });
-  const rs = $('#restart'); if (rs) rs.onclick = () => { s.status='live'; s.viewers=10; s.startedAt=Date.now(); save(); renderStudio(); };
+  const endBtn = $('#endStream'); if (endBtn) endBtn.onclick = () => confirmBox('방송을 종료할까요?', '종료 후 후원 내역은 정산 화면에 그대로 남습니다.', () => { s.status='ended'; s.viewers=0; save(); pushStreamToServer(s); renderStudio(); toast('방송을 종료했습니다'); });
+  const rs = $('#restart'); if (rs) rs.onclick = () => { s.status='live'; s.viewers=10; s.startedAt=Date.now(); save(); pushStreamToServer(s); renderStudio(); };
   // 생성
   let hue = s.hue, emo = s.emoji; if (S.studioTab==='create') { hue = 270; emo = '🎤'; }
   app.querySelectorAll('[data-hue]').forEach(b=>b.onclick=()=>{ hue=+b.dataset.hue; app.querySelectorAll('[data-hue]').forEach(x=>x.classList.toggle('on',x===b)); const p=$('#ePrev'); if(p) p.style.cssText = grad(hue)+'border-radius:10px;max-width:280px;font-size:40px'; });
@@ -867,8 +873,8 @@ function renderStudio() {
       performers: perfs.map((n,i)=>({ id: uid(), name: n, emoji: EMOJIS[i%EMOJIS.length], total: 0 })), moderators: [], donations: [] };
     S.streams.unshift(ns); S.studioStreamId = ns.id; S.currentStreamId = ns.id; S.studioTab = 'overview'; save(); renderStudio(); toast('방송이 생성되었습니다 (홈에 신규로 표시)');
   };
-  const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); renderStudio(); toast('저장했습니다'); };
-  const sv = $('#svSave'); if (sv) sv.onclick = () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); const path = ($('#svPath').value.trim() || 'live/stream').replace(/^\/|\/$/g,''); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; } S.server = { ip, path, tunnel }; s.playUrl = `${tunnel}/${path}/index.m3u8`; save(); renderStudio(); toast('이 방송이 실제 송출에 연결되었습니다 → 라이브 탭에서 확인'); };
+  const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); pushStreamToServer(s); renderStudio(); toast('저장했습니다'); };
+  const sv = $('#svSave'); if (sv) sv.onclick = () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); const path = ($('#svPath').value.trim() || 'live/stream').replace(/^\/|\/$/g,''); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; } S.server = { ip, path, tunnel }; s.playUrl = `${tunnel}/${path}/index.m3u8`; save(); pushStreamToServer(s); renderStudio(); toast('이 방송이 실제 송출에 연결되었습니다 → 라이브 탭에서 확인'); };
   const pa = $('#pAdd'); if (pa) pa.onclick = () => { const n = $('#pName').value.trim(); if (!n) return; s.performers.push({ id: uid(), name: n, emoji: $('#pEmo').value, total: 0 }); save(); renderStudio(); };
   app.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ s.performers = s.performers.filter(p=>p.id!==b.dataset.del); save(); renderStudio(); });
   const ma = $('#mAdd'); if (ma) ma.onclick = () => { const n = $('#mName').value.trim(); if (n && !s.moderators.includes(n)) s.moderators.push(n); save(); renderStudio(); };
