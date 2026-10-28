@@ -467,8 +467,16 @@ async function camListDevices() {
 async function camOpen(facing) {
   if (camState.raw) { camState.raw.getTracks().forEach(t=>t.stop()); }
   const isId = facing && facing !== 'user' && facing !== 'environment';
-  const video = isId ? { deviceId: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : { facingMode: facing || 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30 } };
-  const st = await navigator.mediaDevices.getUserMedia({ video, audio: { echoCancellation: true, noiseSuppression: true } });
+  // 가상 카메라(YYCam 등)는 앱이 요청한 해상도로 출력함 → 세로 1080×1920 우선, 안 되면 720×1280
+  const audio = { echoCancellation: true, noiseSuppression: true };
+  let st = null;
+  if (isId) {
+    for (const [w,h] of [[1080,1920],[720,1280],[1280,720]]) {
+      try { st = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: facing }, width: { exact: w }, height: { exact: h }, frameRate: { ideal: 30 } }, audio }); break; } catch(e) {}
+    }
+    if (!st) st = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: facing }, width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, audio });
+  } else st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, audio });
+  { const t = st.getVideoTracks()[0]?.getSettings?.(); if (t) camSay(`카메라 ${t.width}×${t.height}`); }
   camListDevices();
   camState.raw = st; const v = $('#camRaw'); v.srcObject = st; await v.play().catch(()=>{});
   camDraw();
