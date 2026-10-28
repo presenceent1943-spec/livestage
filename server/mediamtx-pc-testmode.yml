@@ -1,0 +1,31 @@
+# LIVE STAGE - MediaMTX (TEST MODE: no publish password; LAN/tunnel testing only)
+# Before any public use, switch back to mediamtx-secure.yml
+logLevel: info
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    permissions:
+      - action: publish
+        path: ""
+      - action: read
+        path: ""
+rtmp: yes
+rtmpAddress: :1935
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigins: ['*']
+hlsVariant: fmp4
+hlsSegmentCount: 5
+hlsSegmentDuration: 1s
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+rtsp: no
+srt: no
+paths:
+  all_others:
+    source: publisher

@@ -718,7 +718,7 @@ function openBlock() {
   document.querySelectorAll('[data-unblock]').forEach(b=>b.onclick=()=>{ S.blocked = S.blocked.filter(x=>x!==b.dataset.unblock); save(); openBlock(); });
 }
 /* 실제 송출 재생 — HLS (.m3u8). MediaMTX 기본 주소: http://서버IP:8888/live/index.m3u8 */
-let hlsInst = null;
+let hlsInst = null, retryN = 0;
 function playStream(url) {
   const v = $('#vidEl'), msg = $('#vidMsg'); if (!v) return;
   const say = t => { if (msg) msg.innerHTML = `<small>${esc(t)}</small>`; };
@@ -731,9 +731,12 @@ function playStream(url) {
   if (window.Hls && Hls.isSupported()) {
     hlsInst = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6, backBufferLength: 10 });
     hlsInst.loadSource(url); hlsInst.attachMedia(v);
-    hlsInst.on(Hls.Events.MANIFEST_PARSED, () => { say(''); v.play().catch(()=>{}); });
-    hlsInst.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) say(location.protocol==='https:' && url.startsWith('http:') ? '보안 페이지(https)에서는 http 주소를 재생할 수 없습니다. 다운로드한 파일로 열어주세요.' : '영상을 불러올 수 없습니다. 송출이 켜져 있는지, 주소·방화벽(8888)을 확인하세요.'); });
-  } else if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = url; v.addEventListener('loadedmetadata', () => { say(''); v.play().catch(()=>{}); }); v.addEventListener('error', () => say('영상을 불러올 수 없습니다. 송출 상태와 주소를 확인하세요.')); }
+    hlsInst.on(Hls.Events.MANIFEST_PARSED, () => { retryN = 0; say(''); v.play().catch(()=>{}); });
+    hlsInst.on(Hls.Events.ERROR, (_, d) => { if (!d.fatal) return;
+      if (location.protocol==='https:' && url.startsWith('http:')) { say('보안 페이지(https)에서는 http 주소를 재생할 수 없습니다.'); return; }
+      retryN++; say(`방송 신호를 기다리는 중… (${retryN}) 송출이 시작되면 자동으로 재생됩니다`);
+      liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); });
+  } else if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = url; v.addEventListener('loadedmetadata', () => { say(''); v.play().catch(()=>{}); }); v.addEventListener('error', () => { retryN++; say(`방송 신호를 기다리는 중… (${retryN})`); liveTimers.push(setTimeout(() => { if (document.body.contains(v)) playStream(url); }, 5000)); }); }
   else say('이 브라우저는 HLS 재생을 지원하지 않습니다.');
 }
 function drawVideo(s) {
@@ -791,7 +794,7 @@ function renderStudio() {
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">폰 — Larix Broadcaster</h2></div>
         <div class="tbl-wrap"><table>
           <tr><th style="width:140px">URL</th><td><code>rtmp://${esc(ip)}:1935/${esc(srv.path||'live/stream')}</code></td></tr>
-          <tr><th>조건</th><td>폰이 PC와 <b>같은 와이파이</b> · Target type: Default · 테스트 모드라 비밀번호 없음</td></tr>
+          <tr><th>조건</th><td>IP가 192.168.x.x 면 <b>같은 와이파이</b>에서만, 공인 IP(그 외)면 <b>LTE 어디서든</b> 송출 가능 · Target type: Default · 테스트 모드라 비밀번호 없음</td></tr>
         </table></div>
         <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">PC — OBS Studio</h2></div>
         <div class="tbl-wrap"><table>
