@@ -1,0 +1,20 @@
+# LIVE STAGE 송출 서버 — MediaMTX
+# 실행: docker compose up -d   /  중지: docker compose down  / 로그: docker compose logs -f
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.17.0
+    container_name: livestage-mediamtx
+    restart: unless-stopped
+    ports:
+      - "1935:1935"      # RTMP 입력 (OBS, Larix)
+      - "8888:8888"      # HLS 재생 (시청자)
+      - "8889:8889"      # WebRTC (WHIP 송출 / WHEP 저지연 시청)
+      - "8189:8189/udp"  # WebRTC ICE
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    env_file: .env       # 비밀번호는 .env 에만 둡니다 (git에 올리지 않음)
+    environment:
+      # .env 의 값을 MediaMTX 설정으로 주입
+      MTX_AUTHINTERNALUSERS_0_USER: ${PUBLISH_USER}
+      MTX_AUTHINTERNALUSERS_0_PASS: ${PUBLISH_PASS}
+      MTX_WEBRTCADDITIONALHOSTS_0: ${SERVER_PUBLIC_IP}

@@ -1,0 +1,16 @@
+{
+  "name": "LIVE STAGE",
+  "short_name": "LIVE STAGE",
+  "description": "여러 출연자가 함께하는 라이브 방송 플랫폼",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b0d",
+  "theme_color": "#0b0b0d",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

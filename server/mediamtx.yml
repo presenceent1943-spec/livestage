@@ -1,0 +1,46 @@
+# LIVE STAGE MediaMTX 설정 (비밀번호는 .env → docker-compose 환경변수로 주입)
+logLevel: info
+
+authMethod: internal
+authInternalUsers:
+  # 0번: 송출자 (user/pass 는 .env 에서 덮어씀)
+  - user: presence
+    pass: CHANGE_ME_VIA_ENV
+    permissions:
+      - action: publish
+        path: ""
+  # 1번: 시청자 — 아이디/비번 없이 재생 허용 (시제품). 유료 방송 전환 시 read 에 토큰 인증 추가
+  - user: any
+    pass:
+    permissions:
+      - action: read
+        path: ""
+
+rtmp: yes
+rtmpAddress: :1935
+
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigin: '*'        # 시제품 HTML(로컬 파일)에서 재생 허용
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigin: '*'
+webrtcLocalUDPAddress: :8189
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+# webrtcAdditionalHosts 는 .env 의 SERVER_PUBLIC_IP 로 주입됨
+
+rtsp: no
+srt: no
+
+paths:
+  # 방송 경로. 채널을 늘리려면 live2, live3 … 을 추가하거나 all 을 쓰면 됩니다.
+  live:
+    source: publisher
+  all_others:
+    source: publisher

@@ -1,0 +1,25 @@
+LIVE STAGE — 서버 없이 내 PC로 방송하기 (카드·계정 불필요)
+
+[구성]
+OBS 또는 폰(Larix) → 내 PC(MediaMTX) → Cloudflare 무료 터널(https) → 시청자 / livestage.html
+
+[순서]
+1. password.txt 를 메모장으로 열어 긴 비밀번호로 바꾸고 저장 (공백 없이 한 줄)
+2. 1_start_server.bat 더블클릭 → "Windows 보안 경고" 뜨면 [액세스 허용]
+   - SmartScreen "확인되지 않은 앱" 이 뜨면 [추가 정보] → [실행]
+3. OBS: 설정 → 방송 → 사용자 지정
+   서버      rtmp://localhost:1935/
+   스트림 키  live?user=presence&pass=비밀번호
+   → 방송 시작
+   폰(Larix, 같은 와이파이): rtmp://PC내부IP:1935/live , 아이디 presence / 비밀번호
+4. 브라우저에서 http://localhost:8889/live/ 열어 영상 확인
+5. 2_start_tunnel.bat 더블클릭 → https://xxxx.trycloudflare.com 주소 복사
+6. livestage.html 열기 → 데모 역할 호스트 → 방송 설정 → 실제 재생 주소에
+   https://xxxx.trycloudflare.com/live/index.m3u8  붙여넣기 → 저장 → 라이브 탭
+   (이 주소는 외부 누구나, 폰 LTE 에서도 시청 가능)
+
+[한계]
+- PC가 켜져 있어야 방송됨. 터널 주소는 매번 바뀜 (고정하려면 도메인 + Cloudflare 계정 필요, 무료)
+- 집 인터넷 업로드 속도 = 시청자 한계. 3Mbps 방송 기준 100Mbps 업로드면 약 30명, 터널이 캐시를 조금 도와줌
+- 폰 외부(LTE)에서 "송출"은 아직 안 됨 (같은 와이파이에서만). 외부 송출은 https 터널로 WHIP 연결 시 가능 → 다음 단계
+- 테스트용 구성입니다. 실제 오픈은 Cloudflare Stream 또는 VPS 로 옮깁니다.
