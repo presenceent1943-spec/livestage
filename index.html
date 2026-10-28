@@ -435,9 +435,9 @@ function renderLive() {
     <div class="live">
       <div style="min-width:0">
         <div class="video">
-          ${s.playUrl && !ended ? `<video id="vidEl" playsinline autoplay muted controls></video>` : `<canvas id="vid" width="960" height="540"></canvas>`}
+          ${s.playUrl && !ended ? `<video id="vidEl" playsinline autoplay muted></video>` : `<canvas id="vid" width="960" height="540"></canvas>`}
           <div class="ov"><div class="ov-top"><span class="pill ${ended?'gray':'live'}">${ended ? (s.status==='stopped'?'운영자 중단':'종료됨') : '● LIVE'}</span><span class="pill gray num" id="vw">👁 ${s.viewers.toLocaleString()}</span><span class="pill new">${s.playUrl && !ended ? '실제 송출' : '샘플 영상'}</span></div></div>
-          ${s.playUrl && !ended ? `<div class="sample" id="vidMsg" style="top:auto;bottom:44px;transform:translateX(-50%)"><small>서버 연결 중…</small></div>` : `<div class="sample"><b>${ended ? '방송이 종료되었습니다' : '실제 라이브 영상이 들어갈 자리'}</b><small>스튜디오 → 방송 설정에서 재생 주소(HLS)를 넣으면 실제 송출이 보입니다</small></div>`}
+          ${s.playUrl && !ended ? `<div class="sample" id="vidMsg" style="top:auto;bottom:44px;transform:translateX(-50%)"><small>서버 연결 중…</small></div><button class="btn sm gold" id="unmute" style="position:absolute;right:12px;bottom:12px">🔊 소리 켜기</button>` : `<div class="sample"><b>${ended ? '방송이 종료되었습니다' : '실제 라이브 영상이 들어갈 자리'}</b><small>스튜디오 → 방송 설정에서 재생 주소(HLS)를 넣으면 실제 송출이 보입니다</small></div>`}
           <div class="alert-stack" id="alerts"></div>
         </div>
         <div class="live-meta">
@@ -541,8 +541,9 @@ function playStream(url) {
   const v = $('#vidEl'), msg = $('#vidMsg'); if (!v) return;
   const say = t => { if (msg) msg.innerHTML = `<small>${esc(t)}</small>`; };
   if (hlsInst) { hlsInst.destroy(); hlsInst = null; }
+  const um = $('#unmute'); if (um) um.onclick = () => { v.muted = false; v.play().catch(()=>{}); um.remove(); };
   if (window.Hls && Hls.isSupported()) {
-    hlsInst = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 3 });
+    hlsInst = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6, backBufferLength: 10 });
     hlsInst.loadSource(url); hlsInst.attachMedia(v);
     hlsInst.on(Hls.Events.MANIFEST_PARSED, () => { say(''); v.play().catch(()=>{}); });
     hlsInst.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) say(location.protocol==='https:' && url.startsWith('http:') ? '보안 페이지(https)에서는 http 주소를 재생할 수 없습니다. 다운로드한 파일로 열어주세요.' : '영상을 불러올 수 없습니다. 송출이 켜져 있는지, 주소·방화벽(8888)을 확인하세요.'); });
@@ -588,33 +589,31 @@ function renderStudio() {
         ${s.status==='live' ? `<button class="btn danger" id="endStream">⏹ 방송 종료</button>` : `<button class="btn gold" id="restart">다시 방송 시작 (시제품)</button>`}
       </div>`,
     golive: () => {
-      const srv = S.server || { ip: '', path: 'live' };
-      const ip = srv.ip || '서버IP';
+      const srv = S.server || { ip: '', path: 'live/stream', tunnel: '' };
+      const ip = srv.ip || '192.168.x.x';
+      const tun = (srv.tunnel||'').replace(/\/$/,'');
       return `
       <div class="form">
-        <div class="note gold">실제 송출 설정입니다. 서버 패키지(livestage-server)를 VPS에 올린 뒤 아래에 서버 주소만 넣으면 OBS·폰 설정값이 자동으로 채워집니다. <b>비밀번호는 여기 저장하지 않습니다</b> — OBS/Larix 앱에만 입력하세요.</div>
-        <div class="two"><div class="lbl">송출 서버 주소 (IP 또는 도메인)<input id="svIp" value="${esc(srv.ip)}" placeholder="예: 123.45.67.89"></div>
-        <div class="lbl">이 방송의 경로(채널 키)<input id="svPath" value="${esc(srv.path)}" placeholder="live"></div></div>
+        <div class="note gold"><b>PC 서버 모드</b> — LIVESTAGE-PC 폴더에서 <code>1_start_server.bat</code> → <code>2_start_tunnel.bat</code> 를 켠 뒤, 아래 두 칸을 채우고 저장하면 이 방송이 실제 영상에 연결됩니다.</div>
+        <div class="two">
+          <div class="lbl">① 터널 주소 (2_start_tunnel 창의 https://…trycloudflare.com)<input id="svTunnel" value="${esc(srv.tunnel||'')}" placeholder="https://xxxx-xxxx.trycloudflare.com"></div>
+          <div class="lbl">② PC 내부 IP (1_start_server 창의 IPv4)<input id="svIp" value="${esc(srv.ip||'')}" placeholder="192.168.45.80"></div>
+        </div>
+        <div class="lbl">경로 (기본값 그대로)<input id="svPath" value="${esc(srv.path||'live/stream')}"></div>
         <button class="btn gold" id="svSave" style="justify-self:start">저장하고 이 방송에 연결</button>
-        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">① PC — OBS Studio</h2></div>
+        ${tun ? `<div class="note">연결됨 · 재생 주소 <code>${esc(tun)}/${esc(srv.path)}/index.m3u8</code></div>` : ''}
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">폰 — Larix Broadcaster</h2></div>
         <div class="tbl-wrap"><table>
-          <tr><th style="width:160px">설정 → 방송</th><td>서비스: <b>사용자 지정(Custom)</b></td></tr>
-          <tr><th>서버</th><td><code>rtmp://${esc(ip)}:1935/</code></td></tr>
-          <tr><th>스트림 키</th><td><code>${esc(srv.path||'live')}?user=송출아이디&amp;pass=송출비밀번호</code> &nbsp;<span style="color:var(--fg-3)">(.env 의 PUBLISH_USER / PUBLISH_PASS)</span></td></tr>
-          <tr><th>출력 권장</th><td>1280×720 · 30fps · 비트레이트 2500~3500 kbps · 키프레임 간격 1~2초 · x264 veryfast 또는 NVENC</td></tr>
+          <tr><th style="width:140px">URL</th><td><code>rtmp://${esc(ip)}:1935/${esc(srv.path||'live/stream')}</code></td></tr>
+          <tr><th>조건</th><td>폰이 PC와 <b>같은 와이파이</b> · Target type: Default · 테스트 모드라 비밀번호 없음</td></tr>
         </table></div>
-        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">② 폰 — Larix Broadcaster (iOS·Android 무료)</h2></div>
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">PC — OBS Studio</h2></div>
         <div class="tbl-wrap"><table>
-          <tr><th style="width:160px">Connections → +</th><td>URL: <code>rtmp://${esc(ip)}:1935/${esc(srv.path||'live')}</code></td></tr>
-          <tr><th>Login / Password</th><td>송출아이디 / 송출비밀번호 (Authorization: RTMP 기본)</td></tr>
-          <tr><th>영상</th><td>720p · 30fps · 2000~3000 kbps · 가로/세로는 방송 컨셉에 맞게</td></tr>
+          <tr><th style="width:140px">서버</th><td><code>rtmp://localhost:1935/live</code></td></tr>
+          <tr><th>스트림 키</th><td><code>stream</code></td></tr>
+          <tr><th>출력 권장</th><td>1280×720 · 30fps · 2500~3500 kbps · 키프레임 1~2초</td></tr>
         </table></div>
-        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">③ 시청 주소 (자동 연결됨)</h2></div>
-        <div class="tbl-wrap"><table>
-          <tr><th style="width:160px">HLS (기본, 3~6초 지연)</th><td><code>http://${esc(ip)}:8888/${esc(srv.path||'live')}/index.m3u8</code></td></tr>
-          <tr><th>WebRTC (저지연 &lt;1초)</th><td><code>http://${esc(ip)}:8889/${esc(srv.path||'live')}/</code> &nbsp;<span style="color:var(--fg-3)">MediaMTX 내장 플레이어, 브라우저에서 바로 열림</span></td></tr>
-        </table></div>
-        <div class="note">claude.ai 미리보기 안에서는 외부 영상 로드가 차단됩니다. 실제 영상 확인은 <b>다운로드한 livestage.html 파일</b>을 PC·폰 브라우저로 여세요.</div>
+        <div class="note">터널 주소는 2_start_tunnel 을 다시 켤 때마다 바뀝니다. 방송 전 ①만 새로 넣으면 됩니다. 외부 공개 전엔 서버 비밀번호를 다시 켭니다.</div>
       </div>`;
     },
     create: () => `
@@ -689,7 +688,7 @@ function renderStudio() {
     S.streams.unshift(ns); S.studioStreamId = ns.id; S.currentStreamId = ns.id; S.studioTab = 'overview'; save(); renderStudio(); toast('방송이 생성되었습니다 (홈에 신규로 표시)');
   };
   const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); renderStudio(); toast('저장했습니다'); };
-  const sv = $('#svSave'); if (sv) sv.onclick = () => { const ip = $('#svIp').value.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,''); const path = ($('#svPath').value.trim() || 'live').replace(/[^\w-]/g,''); if (!ip) { toast('서버 주소를 입력하세요'); return; } S.server = { ip, path }; s.playUrl = `http://${ip}:8888/${path}/index.m3u8`; save(); renderStudio(); toast('이 방송이 실제 송출 주소에 연결되었습니다'); };
+  const sv = $('#svSave'); if (sv) sv.onclick = () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); const path = ($('#svPath').value.trim() || 'live/stream').replace(/^\/|\/$/g,''); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; } S.server = { ip, path, tunnel }; s.playUrl = `${tunnel}/${path}/index.m3u8`; save(); renderStudio(); toast('이 방송이 실제 송출에 연결되었습니다 → 라이브 탭에서 확인'); };
   const pa = $('#pAdd'); if (pa) pa.onclick = () => { const n = $('#pName').value.trim(); if (!n) return; s.performers.push({ id: uid(), name: n, emoji: $('#pEmo').value, total: 0 }); save(); renderStudio(); };
   app.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ s.performers = s.performers.filter(p=>p.id!==b.dataset.del); save(); renderStudio(); });
   const ma = $('#mAdd'); if (ma) ma.onclick = () => { const n = $('#mName').value.trim(); if (n && !s.moderators.includes(n)) s.moderators.push(n); save(); renderStudio(); };
