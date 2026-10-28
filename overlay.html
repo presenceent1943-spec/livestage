@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LIVE STAGE 오버레이</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="excel-board.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #stage { position: relative; width: 100%; height: 100%; }
+  #stage .xb { transform-origin: top left; }
+  #err { position: absolute; left: 16px; top: 16px; color: #fff; background: rgba(229,72,77,.85); padding: 10px 14px; border-radius: 8px; font: 15px "Noto Sans KR", sans-serif; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="err"></div>
+<script>
+  // OBS 브라우저 소스용 투명 오버레이.  overlay.html?stream=방송ID&scale=1.2&pos=tl
+  const q = new URLSearchParams(location.search);
+  const streamId = q.get('stream');
+  const scale = parseFloat(q.get('scale') || '1');
+  const pos = q.get('pos') || 'tl';   // tl / tr / bl / br
+  const err = document.getElementById('err');
+  if (!streamId) { err.style.display = 'block'; err.textContent = '주소에 ?stream=방송ID 가 필요합니다'; }
+  else {
+    const sb = window.supabase.createClient('https://zomssaylcebzirpvprgq.supabase.co', 'sb_publishable_DNuVzh6ufm5w3vDidiJCdw_Aeux-DQ8');
+    const b = ExcelBoard.mount(document.getElementById('stage'), { sb, streamId, mode: 'obs' });
+    const xb = document.querySelector('.xb');
+    xb.style.transform = `scale(${scale})`;
+    if (pos.includes('r')) { xb.style.left = 'auto'; xb.style.right = '24px'; xb.style.transformOrigin = 'top right'; }
+    if (pos.includes('b')) { xb.style.top = 'auto'; xb.style.bottom = '24px'; xb.style.transformOrigin = (pos.includes('r') ? 'bottom right' : 'bottom left'); }
+    // 연결이 끊기면 30초마다 다시 읽기
+    setInterval(() => b.reload(), 30000);
+  }
+</script>
+</body>
+</html>

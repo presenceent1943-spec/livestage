@@ -16,6 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://js.tosspayments.com/v2/standard"></script>
+<script src="excel-board.js"></script>
 <style>
 /* Layout: 상단 고정 헤더 + 화면별 본문. 라이브 화면은 데스크톱 3열(영상·출연자·채팅), 모바일은 세로 스택 + 하단 탭바 */
 :root {
@@ -371,29 +372,34 @@ const publishAuthHeader = () => PUBLISH_PASS ? { 'Authorization': 'Basic ' + bto
 let AUTH_READY = false;
 const isServerStream = s => !!(sb && s && s.fromServer);
 let SETTINGS = {};          // settings 테이블 (tunnel, server_ip)
+let MISSIONS = [];          // missions 테이블 (엑셀 미션)
+let XB = null;              // 라이브 탭 엑셀 판
 let STREAMS_SYNCED = false;
 /* DB 의 방송·출연자·레이블·설정을 로컬 S 로 동기화 (화면 코드는 S 를 그대로 씀) */
 async function syncAll() {
   if (!sb) return;
-  const [{ data: st }, { data: pf }, { data: lb }, { data: cfg }, { data: gf }] = await Promise.all([
+  const [{ data: st }, { data: pf }, { data: lb }, { data: cfg }, { data: gf }, { data: ms }] = await Promise.all([
     sb.from('streams').select('*').order('started_at', { ascending: false }),
     sb.from('performers').select('*').order('sort'),
     sb.from('labels').select('*'),
     sb.from('settings').select('*'),
     sb.from('gifts').select('stream_id,performer_id,nick,gift,emoji,stars,created_at').order('created_at', { ascending: false }).limit(500),
+    sb.from('missions').select('*').order('sort'),
   ]);
   if (!st) return;
+  MISSIONS = ms || [];
   SETTINGS = Object.fromEntries((cfg||[]).map(r => [r.key, r.value]));
   if (lb && lb.length) S.labels = lb.map(l => ({ id: l.id, name: l.name, owner: '', joinedAt: +new Date(l.created_at), status: l.status, hosts: 0 }));
   const old = Object.fromEntries(S.streams.map(x => [x.id, x]));
   S.streams = st.map(r => {
     const o = old[r.id] || {};
-    const perf = (pf||[]).filter(x => x.stream_id === r.id && x.sort >= 0).map(x => ({ id: x.id, name: x.name, emoji: x.emoji, total: Number(x.total) }));
+    const perf = (pf||[]).filter(x => x.stream_id === r.id && x.sort >= 0).map(x => ({ id: x.id, name: x.name, emoji: x.emoji, total: Number(x.total), roundTotal: Number(x.round_total || 0) }));
     const pname = Object.fromEntries((pf||[]).filter(x => x.stream_id === r.id).map(x => [x.id, x.name]));
     const don = (gf||[]).filter(g => g.stream_id === r.id).map(g => ({ id: g.created_at, performerId: g.performer_id, performerName: pname[g.performer_id] || '?', from: g.nick, gift: g.gift, emoji: g.emoji, stars: g.stars, at: +new Date(g.created_at) })).reverse();
     return { id: r.id, fromServer: true, title: r.title, labelId: r.label_id || 'presence', hostName: r.host_nick, ownerId: r.owner_id, category: r.category || '토크', hue: r.hue ?? 270, emoji: r.emoji || '🎤',
       viewers: o.viewers ?? (10 + Math.floor(Math.random()*40)), status: r.status, playUrl: r.play_url || '', startedAt: +new Date(r.started_at || r.created_at), isNew: (Date.now() - +new Date(r.started_at || r.created_at)) < 3600000*3,
-      performers: perf, moderators: o.moderators || [], donations: don };
+      performers: perf, moderators: o.moderators || [], donations: don,
+      round: { no: r.round_no || 0, title: r.round_title || '', status: r.round_status || 'idle', startedAt: r.round_started_at, endsAt: r.round_ends_at } };
   });
   if (!S.streams.find(x => x.id === S.currentStreamId)) S.currentStreamId = (S.streams.find(x => x.status==='live') || S.streams[0] || {}).id;
   if (!S.streams.find(x => x.id === S.studioStreamId)) S.studioStreamId = S.currentStreamId;
@@ -681,7 +687,7 @@ function route() { const h = location.hash.slice(1); return ROUTES.includes(h) ?
 
 /* ---------- 렌더 ---------- */
 let liveTimers = [];
-function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; cancelAnimationFrame(rafId); if (hlsInst) { hlsInst.destroy(); hlsInst = null; } if (srvChannel && sb) { sb.removeChannel(srvChannel); srvChannel = null; } }
+function stopLive() { liveTimers.forEach(clearInterval); liveTimers = []; cancelAnimationFrame(rafId); if (XB) { XB.destroy(); XB = null; } if (hlsInst) { hlsInst.destroy(); hlsInst = null; } if (srvChannel && sb) { sb.removeChannel(srvChannel); srvChannel = null; } }
 function render() {
   stopLive();
   const r = route();
@@ -785,6 +791,8 @@ function renderLive() {
       </div>
     </div>`;
   if (s.playUrl && !ended) playStream(s.playUrl); else drawVideo(s);
+  if (XB) { XB.destroy(); XB = null; }
+  if (isServerStream(s) && window.ExcelBoard) XB = ExcelBoard.mount(app.querySelector('.video'), { sb, streamId: s.id, mode: 'viewer' });
   renderRank(s);
   const log = $('#chatLog');
   const addMsg = (u, t, cls='') => { if (S.blocked.includes(u)) return; const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = cls==='sys' ? esc(t) : `<span class="u">${esc(u)}</span>${esc(t)}`; log.appendChild(d); while (log.children.length > 80) log.firstChild.remove(); log.scrollTop = log.scrollHeight; };
@@ -792,11 +800,11 @@ function renderLive() {
   if (isServerStream(s)) {
     addMsg('', `${esc(lb.name)} 채널 실시간 채팅입니다. ${ME ? '' : '로그인하면 참여할 수 있습니다.'}`, 'sys');
     sb.from('messages').select('nick,text,kind,user_id').eq('stream_id', s.id).order('created_at', { ascending: false }).limit(40)
-      .then(({ data }) => (data||[]).reverse().forEach(m => addMsg(m.nick, m.text, m.kind==='gift'?'gift':(ME&&m.user_id===ME.id)?'me':'')));
+      .then(({ data }) => (data||[]).reverse().forEach(m => addMsg(m.nick, m.text, ['gift','round','mission'].includes(m.kind)?'gift':(ME&&m.user_id===ME.id)?'me':'')));
     if (srvChannel) sb.removeChannel(srvChannel);
     srvChannel = sb.channel('live-'+s.id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'stream_id=eq.'+s.id }, ({ new: m }) => {
-        addMsg(m.nick, m.text, m.kind==='gift'?'gift':(ME&&m.user_id===ME.id)?'me':'');
+        addMsg(m.nick, m.text, ['gift','round','mission'].includes(m.kind)?'gift':(ME&&m.user_id===ME.id)?'me':'');
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'performers', filter: 'stream_id=eq.'+s.id }, ({ new: p }) => {
         const lp = s.performers.find(x => x.id === p.id); if (!lp) return;
@@ -931,7 +939,7 @@ function renderStudio() {
   const mine = sb ? S.streams.filter(x => canManage(x)) : S.streams;
   if (!mine.length) S.studioTab = 'create';
   let s = mine.find(x=>x.id===S.studioStreamId) || mine[0] || { id:'', title:'(방송 없음)', labelId:'presence', hostName: ME?.nick||'', category:'토크', hue:270, emoji:'🎤', viewers:0, status:'ended', performers:[], moderators:[], donations:[], playUrl:'' };
-  const tabs = [['overview','대시보드'],['golive','📡 방송 켜기'],['cam','📱 앱에서 방송'],['create','방송 생성'],['settings','방송 설정'],['performers','출연자 관리'],['donations','후원 내역'],['mods','모더레이터']];
+  const tabs = [['overview','대시보드'],['golive','📡 방송 켜기'],['cam','📱 앱에서 방송'],['excel','📊 엑셀 운영'],['create','방송 생성'],['settings','방송 설정'],['performers','출연자 관리'],['donations','후원 내역'],['mods','모더레이터']];
   const totalStars = s.performers.reduce((a,p)=>a+p.total,0);
   const body = {
     overview: () => `
@@ -1004,6 +1012,37 @@ function renderStudio() {
           </div>
         </div>
       </div>`,
+    excel: () => {
+      const r = s.round || { no: 0, status: 'idle' };
+      const ms = MISSIONS.filter(m => m.stream_id === s.id);
+      const obsUrl = location.origin + location.pathname.replace(/[^/]*$/, '') + 'overlay.html?stream=' + encodeURIComponent(s.id);
+      const pn = id => (s.performers.find(p => p.id === id) || {}).name || '';
+      const rt = r.status === 'running' ? (r.endsAt ? `마감 ${fmtTime(+new Date(r.endsAt))}` : '시간 제한 없음') : '';
+      return `
+      <div class="form">
+        <div class="note gold"><b>엑셀 방송 운영</b> — 라운드를 시작하면 출연자별 집계가 0에서 다시 시작되고, 시청자 화면과 OBS 오버레이에 순위판·타이머가 뜹니다. 누적 합계는 그대로 보존됩니다.</div>
+        <div class="stats">
+          <div class="stat"><div class="k">현재 라운드</div><div class="v num">${r.no || '-'}</div></div>
+          <div class="stat"><div class="k">상태</div><div class="v"><span class="pill ${r.status==='running'?'live':'gray'}">${r.status==='running'?'● 진행 중':r.status==='ended'?'종료':'대기'}</span></div></div>
+          <div class="stat"><div class="k">제목</div><div class="v" style="font-size:15px">${esc(r.title||'-')}</div></div>
+          <div class="stat"><div class="k">마감</div><div class="v" style="font-size:15px">${rt||'-'}</div></div>
+        </div>
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">라운드</h2></div>
+        <div class="row"><input id="rdTitle" placeholder="라운드 제목 (예: 노래 대결 2라운드)" style="flex:1;min-width:160px"><input id="rdMin" type="number" min="0" max="600" placeholder="제한 시간(분, 0=없음)" style="width:170px"><button class="btn gold" id="rdStart" ${s.status!=='live'?'disabled':''}>${r.status==='running'?'다음 라운드 시작':'라운드 시작'}</button><button class="btn danger" id="rdEnd" ${r.status!=='running'?'disabled':''}>라운드 종료</button></div>
+        <div class="tbl-wrap"><table><tr><th>순위</th><th>출연자</th><th class="r">이번 라운드</th><th class="r">누적</th></tr>
+        ${[...s.performers].sort((a,b)=>b.roundTotal-a.roundTotal||b.total-a.total).map((p,i)=>`<tr><td class="num">${i+1}${i===0&&p.roundTotal>0?' 👑':''}</td><td>${p.emoji} ${esc(p.name)}</td><td class="r num"><b>${p.roundTotal.toLocaleString()}</b></td><td class="r num">${p.total.toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--fg-3)">출연자 관리에서 출연자를 먼저 추가하세요</td></tr>'}</table></div>
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">선물 미션 (시그니처)</h2></div>
+        <div class="note">예: "하트 300개 이상 한 번에 → 애교 미션", "이번 라운드 누적 5,000스타 → 즉석 댄스". 달성하면 시청자 화면·OBS에 알림이 뜨고 채팅에도 기록됩니다.</div>
+        <div class="row"><select id="msWho" style="width:auto"><option value="">전체(합산)</option>${s.performers.map(p=>`<option value="${p.id}">${p.emoji} ${esc(p.name)}</option>`).join('')}</select><select id="msKind" style="width:auto"><option value="single">한 번에 N스타 이상</option><option value="round">이번 라운드 누적 N스타</option></select><input id="msN" type="number" min="1" placeholder="N (스타)" style="width:120px"><input id="msTitle" placeholder="미션 내용" style="flex:1;min-width:160px"><button class="btn gold" id="msAdd">추가</button></div>
+        <div class="tbl-wrap"><table><tr><th>대상</th><th>조건</th><th>미션</th><th>상태</th><th></th></tr>
+        ${ms.map(m=>`<tr><td>${m.performer_id?esc(pn(m.performer_id)):'전체'}</td><td class="num">${m.kind==='single'?'한 번에':'라운드 누적'} ${Number(m.threshold).toLocaleString()}</td><td>${esc(m.title)}</td><td>${m.done?`<span class="pill" style="background:rgba(62,207,142,.18);color:var(--ok)">달성 · ${esc(m.done_by||'')}</span>`:'<span class="pill gray">대기</span>'}</td><td class="r">${m.done?`<button class="btn sm" data-msreset="${m.id}">다시</button> `:''}<button class="btn sm danger" data-msdel="${m.id}">삭제</button></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--fg-3)">등록된 미션이 없습니다</td></tr>'}</table></div>
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">OBS 오버레이 (송출 영상에 순위판 넣기)</h2></div>
+        <div class="row"><input id="obsUrl" value="${esc(obsUrl)}" readonly style="flex:1;min-width:200px"><button class="btn" id="obsCopy">주소 복사</button><a class="btn ghost" href="${esc(obsUrl)}" target="_blank">미리보기</a></div>
+        <div class="note">OBS → 소스 추가 → <b>브라우저</b> → URL에 붙여넣기 · 너비 1920 높이 1080 · "소스가 보이지 않을 때 종료" 해제. 크기는 주소 뒤에 <code>&amp;scale=1.3</code>, 위치는 <code>&amp;pos=tr</code>(오른쪽 위)·<code>bl</code>·<code>br</code> 로 조절. 투명 배경이라 영상 위에 그대로 얹힙니다.</div>
+        <div class="sec-h" style="margin:6px 0 0"><h2 style="font-size:15px">라운드 기록</h2></div>
+        <div id="roundHist" class="tbl-wrap"><div class="empty" style="padding:14px">불러오는 중…</div></div>
+      </div>`;
+    },
     create: () => `
       <div class="form">
         <div class="note">방송을 만들면 <b>전용 송출 경로(live/방송ID)</b>가 발급됩니다. 생성 후 "📡 방송 켜기" 탭에서 OBS·폰 설정값을 확인하세요.</div>
@@ -1082,6 +1121,15 @@ function renderStudio() {
   const sv = $('#svSave'); if (sv) sv.onclick = async () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; }
     if (sb) { const r1 = await sb.rpc('apply_tunnel', { p_tunnel: tunnel }); if (r1.error) { toast('저장 실패: ' + r1.error.message); return; } if (ip) await sb.rpc('set_setting', { p_key: 'server_ip', p_value: ip }); const whip = $('#svWhip').value.trim().replace(/\/$/,''); await sb.rpc('set_setting', { p_key: 'whip_tunnel', p_value: whip }); STREAMS_SYNCED = false; await syncAll(); toast('서버에 저장됨 — 모든 라이브 방송이 이 주소로 연결됩니다'); renderStudio(); }
     else { S.server = { ip, tunnel }; s.playUrl = `${tunnel}/live/${s.id}/index.m3u8`; save(); renderStudio(); } };
+  // ---- 엑셀 운영 ----
+  const refreshStudio = async () => { STREAMS_SYNCED = false; await syncAll(); renderStudio(); };
+  const rs2 = $('#rdStart'); if (rs2) rs2.onclick = async () => { const t = $('#rdTitle').value.trim(), m = parseInt($('#rdMin').value || '0', 10) || 0; rs2.disabled = true; const { data, error } = await sb.rpc('start_round', { p_stream: s.id, p_title: t, p_minutes: m }); if (error) { toast('시작 실패: ' + error.message); rs2.disabled = false; return; } toast(`라운드 ${data} 시작`); refreshStudio(); };
+  const re2 = $('#rdEnd'); if (re2) re2.onclick = () => confirmBox('라운드를 종료할까요?', '이번 라운드 순위가 확정되고 우승자가 발표됩니다.', async () => { const { error } = await sb.rpc('end_round', { p_stream: s.id }); if (error) { toast('종료 실패: ' + error.message); return; } toast('라운드 종료'); refreshStudio(); }, '종료');
+  const msa = $('#msAdd'); if (msa) msa.onclick = async () => { const n = parseInt($('#msN').value, 10), t = $('#msTitle').value.trim(); if (!n || n < 1) { toast('N(스타)을 입력하세요'); return; } if (!t) { toast('미션 내용을 입력하세요'); return; } const { error } = await sb.rpc('add_mission', { p_stream: s.id, p_performer: $('#msWho').value || null, p_title: t, p_kind: $('#msKind').value, p_threshold: n }); if (error) { toast('추가 실패: ' + error.message); return; } refreshStudio(); };
+  app.querySelectorAll('[data-msdel]').forEach(b => b.onclick = async () => { const { error } = await sb.rpc('remove_mission', { p_mission: b.dataset.msdel }); if (error) { toast('삭제 실패: ' + error.message); return; } refreshStudio(); });
+  app.querySelectorAll('[data-msreset]').forEach(b => b.onclick = async () => { const { error } = await sb.rpc('reset_mission', { p_mission: b.dataset.msreset }); if (error) { toast('실패: ' + error.message); return; } refreshStudio(); });
+  const oc = $('#obsCopy'); if (oc) oc.onclick = async () => { try { await navigator.clipboard.writeText($('#obsUrl').value); toast('OBS 오버레이 주소를 복사했습니다'); } catch(e) { $('#obsUrl').select(); toast('주소를 선택했습니다 — Ctrl+C'); } };
+  const rh = $('#roundHist'); if (rh && sb) sb.from('rounds').select('*').eq('stream_id', s.id).order('round_no', { ascending: false }).limit(30).then(({ data, error }) => { if (!document.body.contains(rh)) return; if (error) { rh.innerHTML = `<div class="note">기록을 불러올 수 없습니다 (${esc(error.message)})</div>`; return; } rh.innerHTML = `<table><tr><th>라운드</th><th>제목</th><th>시작</th><th>종료</th><th>우승</th><th class="r">합계</th></tr>${(data||[]).map(r=>`<tr><td class="num">${r.round_no}</td><td>${esc(r.title||'')}</td><td class="num">${fmtTime(+new Date(r.started_at))}</td><td class="num">${r.ended_at?fmtTime(+new Date(r.ended_at)):'진행 중'}</td><td>${r.winner_name?'👑 '+esc(r.winner_name):'-'}</td><td class="r num">${Number(r.total).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--fg-3)">아직 라운드 기록이 없습니다</td></tr>'}</table>`; });
   const pa = $('#pAdd'); if (pa) pa.onclick = async () => { const n = $('#pName').value.trim(); if (!n) return;
     if (sb) { const { error } = await sb.rpc('add_performer', { p_stream: s.id, p_name: n, p_emoji: $('#pEmo').value }); if (error) { toast('추가 실패: ' + error.message); return; } STREAMS_SYNCED = false; await syncAll(); renderStudio(); return; }
     s.performers.push({ id: uid(), name: n, emoji: $('#pEmo').value, total: 0 }); save(); renderStudio(); };
