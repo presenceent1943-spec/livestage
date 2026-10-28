@@ -456,9 +456,20 @@ async function logout() { if (sb) await sb.auth.signOut(); ME = null; WALLET = n
 const camState = { on: false, stream: null, raw: null, pc: null, whipUrl: null, raf: 0, msg: '', f: { smooth: 35, bright: 8, warm: 10, sharp: 10, mirror: true, rot: 0 } };
 try { Object.assign(camState.f, JSON.parse(localStorage.getItem('ls-cam-f')||'{}')); } catch(e) {}
 function camSay(t) { camState.msg = t; const m = $('#camMsg'); if (m) m.textContent = t; }
+async function camListDevices() {
+  const sel = $('#camSel'); if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  if (!devs.length || !devs[0].label) return;   // 권한 전엔 이름이 비어 있음
+  const cur = sel.value;
+  sel.innerHTML = devs.map(d => `<option value="${esc(d.deviceId)}">${esc(d.label.replace(/\(.*?\)/g,'').trim() || '카메라')}</option>`).join('');
+  const prefer = devs.find(d => /yycam|virtual|obs/i.test(d.label)); if (prefer && !camState.devChosen) sel.value = prefer.deviceId; else if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+}
 async function camOpen(facing) {
   if (camState.raw) { camState.raw.getTracks().forEach(t=>t.stop()); }
-  const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30 } }, audio: { echoCancellation: true, noiseSuppression: true } });
+  const isId = facing && facing !== 'user' && facing !== 'environment';
+  const video = isId ? { deviceId: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : { facingMode: facing || 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30 } };
+  const st = await navigator.mediaDevices.getUserMedia({ video, audio: { echoCancellation: true, noiseSuppression: true } });
+  camListDevices();
   camState.raw = st; const v = $('#camRaw'); v.srcObject = st; await v.play().catch(()=>{});
   camDraw();
 }
@@ -923,7 +934,7 @@ function renderStudio() {
             <video id="camRaw" playsinline muted autoplay style="display:none"></video>
           </div>
           <div style="display:grid;gap:10px;align-content:start">
-            <div class="lbl">카메라<select id="camSel"><option value="user">전면</option><option value="environment">후면</option></select></div>
+            <div class="lbl">카메라 (YYCam 등 가상 카메라도 여기 표시됨)<select id="camSel"><option value="user">전면</option><option value="environment">후면</option></select></div>
             <div class="lbl">피부 보정 <b id="vSmooth">${camState.f.smooth}</b><input type="range" id="fSmooth" min="0" max="100" value="${camState.f.smooth}"></div>
             <div class="lbl">밝기 <b id="vBright">${camState.f.bright}</b><input type="range" id="fBright" min="-30" max="40" value="${camState.f.bright}"></div>
             <div class="lbl">화사함(따뜻함) <b id="vWarm">${camState.f.warm}</b><input type="range" id="fWarm" min="0" max="40" value="${camState.f.warm}"></div>
@@ -1029,7 +1040,8 @@ function renderStudio() {
     app.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => { camState.f.rot = +b.dataset.rot; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} app.querySelectorAll('[data-rot]').forEach(x => x.classList.toggle('gold', x === b)); });
     const mir = $('#fMirror'); if (mir) mir.onchange = () => { camState.f.mirror = mir.checked; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} };
     const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>camSay('미리보기 중 — 보정을 조절한 뒤 송출 시작')).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
-    const cs = $('#camSel'); if (cs) cs.onchange = () => { if (camState.raw) camOpen(cs.value); };
+    const cs = $('#camSel'); if (cs) cs.onchange = () => { camState.devChosen = true; if (camState.raw) camOpen(cs.value).catch(e => camSay('카메라 전환 실패: ' + e.message)); };
+    camListDevices();
     const st = $('#camStart'); if (st) st.onclick = () => camStart(s).catch(e => camSay('오류: ' + e.message));
     const sp = $('#camStop'); if (sp) sp.onclick = camStop;
     if (camState.raw) camDraw();
