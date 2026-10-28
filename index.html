@@ -551,11 +551,16 @@ async function camStart(s) {
   camState.whipUrl = loc ? (loc.startsWith('http') ? loc : base + loc) : null;
   await pc.setRemoteDescription({ type: 'answer', sdp: answer });
   camState.pc = pc; camState.stream = out; camState.on = true;
+  // 탭이 뒤로 가거나 창이 최소화되면 브라우저가 캔버스 그리기를 멈춰 검은 화면이 나감 → 그동안은 보정 없는 카메라 원본을 그대로 송출
+  camState.capTrack = cs.getVideoTracks()[0]; camState.rawTrack = camState.raw.getVideoTracks()[0];
+  camState.onVis = () => { const sn = pc.getSenders().find(x => x.track && x.track.kind === 'video') || pc.getSenders().find(x => !x.track); if (!sn) return; const t = document.hidden ? camState.rawTrack : camState.capTrack; if (sn.track !== t) sn.replaceTrack(t).catch(()=>{}); };
+  document.addEventListener('visibilitychange', camState.onVis); camState.onVis();
   pc.onconnectionstatechange = () => { camSay('연결 상태: ' + pc.connectionState); if (['failed','disconnected','closed'].includes(pc.connectionState)) { camState.on = false; const b = $('#camBadge'); if (b) { b.className='pill gray'; b.textContent='대기'; } } };
   camSay('송출 중 — 라이브 탭에서 확인하세요'); renderStudio(); camDraw();
 }
 async function camStop() {
   try { if (camState.whipUrl) await fetch(camState.whipUrl, { method: 'DELETE' }); } catch(e) {}
+  if (camState.onVis) { document.removeEventListener('visibilitychange', camState.onVis); camState.onVis = null; }
   if (camState.pc) camState.pc.close(); camState.pc = null; camState.on = false; camState.whipUrl = null;
   camSay('송출 중지'); renderStudio();
 }
