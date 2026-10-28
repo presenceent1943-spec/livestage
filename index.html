@@ -462,10 +462,14 @@ function camSay(t) { camState.msg = t; const m = $('#camMsg'); if (m) m.textCont
 async function camListDevices() {
   const sel = $('#camSel'); if (!sel || !navigator.mediaDevices?.enumerateDevices) return;
   const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
-  if (!devs.length || !devs[0].label) return;   // 권한 전엔 이름이 비어 있음
+  if (!devs.length) return;
+  if (!devs[0].label) {   // 권한 전엔 이름이 비어 있음 → 카메라를 잠깐 열어 권한을 받고 다시 목록 읽기 (새로고침 후에도 YYCam 등이 바로 보이게)
+    if (camListDevices._asked) return; camListDevices._asked = true;
+    try { const st = await navigator.mediaDevices.getUserMedia({ video: true }); st.getTracks().forEach(t => t.stop()); return camListDevices(); } catch(e) { camSay('카메라 권한이 필요합니다 — 주소창의 카메라 아이콘에서 허용'); return; }
+  }
   const cur = sel.value;
   sel.innerHTML = devs.map(d => `<option value="${esc(d.deviceId)}">${esc(d.label.replace(/\(.*?\)/g,'').trim() || '카메라')}</option>`).join('');
-  const prefer = devs.find(d => /yycam|virtual|obs/i.test(d.label)); if (prefer && !camState.devChosen) sel.value = prefer.deviceId; else if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  const prefer = devs.find(d => /yycam pro(?! plus)/i.test(d.label)) || devs.find(d => /yycam|virtual|obs/i.test(d.label)); if (prefer && !camState.devChosen) sel.value = prefer.deviceId; else if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
 }
 async function camOpen(facing) {
   if (camState.raw) { camState.raw.getTracks().forEach(t=>t.stop()); }
