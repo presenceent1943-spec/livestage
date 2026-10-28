@@ -452,6 +452,75 @@ function openAuth(mode) {
 }
 async function logout() { if (sb) await sb.auth.signOut(); ME = null; WALLET = null; if (walletChan) { sb.removeChannel(walletChan); walletChan = null; } S.myName = '나(시청자)'; save(); renderAuthBox(); render(); toast('로그아웃했습니다'); }
 
+/* ---------- 앱 내 카메라 송출 (보정 + WebRTC/WHIP) ---------- */
+const camState = { on: false, stream: null, raw: null, pc: null, whipUrl: null, raf: 0, msg: '', f: { smooth: 45, bright: 8, warm: 10, sharp: 10, mirror: true } };
+try { Object.assign(camState.f, JSON.parse(localStorage.getItem('ls-cam-f')||'{}')); } catch(e) {}
+function camSay(t) { camState.msg = t; const m = $('#camMsg'); if (m) m.textContent = t; }
+async function camOpen(facing) {
+  if (camState.raw) { camState.raw.getTracks().forEach(t=>t.stop()); }
+  const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || 'user', width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30 } }, audio: { echoCancellation: true, noiseSuppression: true } });
+  camState.raw = st; const v = $('#camRaw'); v.srcObject = st; await v.play().catch(()=>{});
+  camDraw();
+}
+function camDraw() {
+  cancelAnimationFrame(camState.raf);
+  const v = $('#camRaw'), c = $('#camCanvas'); if (!v || !c) return;
+  const ctx = c.getContext('2d'); const W = c.width, H = c.height;
+  const off = document.createElement('canvas'); off.width = W; off.height = H; const octx = off.getContext('2d');
+  const loop = () => {
+    if (!document.body.contains(c)) { camState.raf = 0; return; }
+    if (v.videoWidth) {
+      const f = camState.f;
+      // 영상 비율 맞춰 세로 꽉 채우기
+      const vr = v.videoWidth / v.videoHeight, cr = W / H; let sw, sh, sx, sy;
+      if (vr > cr) { sh = v.videoHeight; sw = sh * cr; sx = (v.videoWidth - sw) / 2; sy = 0; } else { sw = v.videoWidth; sh = sw / cr; sx = 0; sy = (v.videoHeight - sh) / 2; }
+      ctx.save(); if (f.mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+      // 1) 기본 색 보정
+      const b = 1 + f.bright/100, sat = 1 + f.warm/100, con = 1 + f.sharp/200;
+      ctx.filter = `brightness(${b}) saturate(${sat}) contrast(${con})`;
+      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, W, H);
+      // 2) 피부 보정: 블러 레이어를 부분 투명으로 덮기 (소프트 포커스)
+      if (f.smooth > 0) {
+        octx.save(); octx.filter = `blur(${2 + f.smooth/12}px) brightness(${b}) saturate(${sat})`; octx.drawImage(v, sx, sy, sw, sh, 0, 0, W, H); octx.restore();
+        ctx.filter = 'none'; ctx.globalAlpha = f.smooth/100 * 0.75; ctx.drawImage(off, 0, 0); ctx.globalAlpha = 1;
+      }
+      // 3) 따뜻함: 살짝 주황 오버레이
+      if (f.warm > 0) { ctx.filter = 'none'; ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(255,180,120,${f.warm/100*0.5})`; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation = 'source-over'; }
+      ctx.restore();
+    }
+    camState.raf = requestAnimationFrame(loop);
+  };
+  loop();
+}
+async function camStart(s) {
+  const base = (SETTINGS.whip_tunnel || '').replace(/\/$/,'');
+  if (!base) { camSay('방송 켜기 탭 ③에 카메라 송출용 터널 주소를 먼저 저장하세요'); return; }
+  if (!camState.raw) await camOpen($('#camSel').value);
+  const c = $('#camCanvas'); const cs = c.captureStream(30);
+  const out = new MediaStream([cs.getVideoTracks()[0], ...camState.raw.getAudioTracks()]);
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  out.getTracks().forEach(t => pc.addTrack(t, out));
+  pc.getSenders().forEach(sn => { if (sn.track.kind === 'video') { const p = sn.getParameters(); p.encodings = [{ maxBitrate: 2_000_000 }]; sn.setParameters(p).catch(()=>{}); } });
+  const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+  await new Promise(r => { if (pc.iceGatheringState === 'complete') r(); else { const t = setTimeout(r, 2500); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); r(); } }; } });
+  camSay('서버 연결 중…');
+  let res;
+  try { res = await fetch(`${base}/live/${s.id}/whip`, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp }); }
+  catch (e) { camSay('서버에 연결할 수 없습니다 (터널 주소·3_start_tunnel_webcam 창 확인)'); pc.close(); return; }
+  if (!res.ok) { camSay(`서버 거절 (HTTP ${res.status}) — 서버 설정의 webrtc 항목 확인`); pc.close(); return; }
+  const answer = await res.text(); const loc = res.headers.get('Location');
+  camState.whipUrl = loc ? (loc.startsWith('http') ? loc : base + loc) : null;
+  await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+  camState.pc = pc; camState.stream = out; camState.on = true;
+  pc.onconnectionstatechange = () => { camSay('연결 상태: ' + pc.connectionState); if (['failed','disconnected','closed'].includes(pc.connectionState)) { camState.on = false; const b = $('#camBadge'); if (b) { b.className='pill gray'; b.textContent='대기'; } } };
+  camSay('송출 중 — 라이브 탭에서 확인하세요'); renderStudio(); camDraw();
+}
+async function camStop() {
+  try { if (camState.whipUrl) await fetch(camState.whipUrl, { method: 'DELETE' }); } catch(e) {}
+  if (camState.pc) camState.pc.close(); camState.pc = null; camState.on = false; camState.whipUrl = null;
+  camSay('송출 중지'); renderStudio();
+}
+
 /* ---------- 스타 충전 (토스페이먼츠) ---------- */
 async function openCharge() {
   if (!sb) { toast('서버 미연결'); return; }
@@ -796,7 +865,7 @@ function renderStudio() {
   const mine = sb ? S.streams.filter(x => canManage(x)) : S.streams;
   if (!mine.length) S.studioTab = 'create';
   let s = mine.find(x=>x.id===S.studioStreamId) || mine[0] || { id:'', title:'(방송 없음)', labelId:'presence', hostName: ME?.nick||'', category:'토크', hue:270, emoji:'🎤', viewers:0, status:'ended', performers:[], moderators:[], donations:[], playUrl:'' };
-  const tabs = [['overview','대시보드'],['golive','📡 방송 켜기'],['create','방송 생성'],['settings','방송 설정'],['performers','출연자 관리'],['donations','후원 내역'],['mods','모더레이터']];
+  const tabs = [['overview','대시보드'],['golive','📡 방송 켜기'],['cam','📱 앱에서 방송'],['create','방송 생성'],['settings','방송 설정'],['performers','출연자 관리'],['donations','후원 내역'],['mods','모더레이터']];
   const totalStars = s.performers.reduce((a,p)=>a+p.total,0);
   const body = {
     overview: () => `
@@ -824,6 +893,7 @@ function renderStudio() {
           <div class="lbl">① 터널 주소 (2_start_tunnel 창의 https://…trycloudflare.com)<input id="svTunnel" value="${esc(srv.tunnel||'')}" placeholder="https://xxxx-xxxx.trycloudflare.com"></div>
           <div class="lbl">② PC 내부 IP (1_start_server 창의 IPv4)<input id="svIp" value="${esc(srv.ip||'')}" placeholder="192.168.45.80"></div>
         </div>
+        <div class="lbl">③ 앱 카메라 송출용 터널 (3_start_tunnel_webcam 창의 https://…) — 선택<input id="svWhip" value="${esc(SETTINGS.whip_tunnel||'')}" placeholder="https://yyyy-yyyy.trycloudflare.com"></div>
         <button class="btn gold" id="svSave" style="justify-self:start">저장 (모든 라이브 방송에 적용)</button>
         ${s.playUrl ? `<div class="note">이 방송 재생 주소 <code>${esc(s.playUrl)}</code></div>` : '<div class="note">아직 재생 주소 없음 — 위 터널 주소를 저장하면 자동 연결됩니다</div>'}
         <div class="note gold">이 방송의 송출 경로는 <code>${esc(srv.path)}</code> 입니다. 방송마다 경로가 달라서 여러 레이블이 같은 서버로 동시에 송출할 수 있습니다.</div>
@@ -841,6 +911,31 @@ function renderStudio() {
         <div class="note">터널 주소는 2_start_tunnel 을 다시 켤 때마다 바뀝니다. 방송 전 ①만 새로 넣으면 됩니다. 외부 공개 전엔 서버 비밀번호를 다시 켭니다.</div>
       </div>`;
     },
+    cam: () => `
+      <div class="form">
+        <div class="note gold">앱만으로 방송 — 카메라를 켜고 보정을 적용해 바로 송출합니다. 다른 앱 불필요. ${SETTINGS.whip_tunnel ? '' : '<b>먼저 "방송 켜기" 탭 ③에 카메라 송출용 터널 주소를 저장하세요.</b>'}</div>
+        <div class="split">
+          <div>
+            <div class="video" style="aspect-ratio:9/16;max-width:360px;margin:0 auto;position:relative"><canvas id="camCanvas" width="720" height="1280" style="display:block;width:100%;height:100%;object-fit:cover"></canvas>
+              <div class="ov"><div class="ov-top"><span class="pill ${camState.on?'live':'gray'}" id="camBadge">${camState.on?'● 송출 중':'대기'}</span></div></div></div>
+            <video id="camRaw" playsinline muted autoplay style="display:none"></video>
+          </div>
+          <div style="display:grid;gap:10px;align-content:start">
+            <div class="lbl">카메라<select id="camSel"><option value="user">전면</option><option value="environment">후면</option></select></div>
+            <div class="lbl">피부 보정 <b id="vSmooth">${camState.f.smooth}</b><input type="range" id="fSmooth" min="0" max="100" value="${camState.f.smooth}"></div>
+            <div class="lbl">밝기 <b id="vBright">${camState.f.bright}</b><input type="range" id="fBright" min="-30" max="40" value="${camState.f.bright}"></div>
+            <div class="lbl">화사함(따뜻함) <b id="vWarm">${camState.f.warm}</b><input type="range" id="fWarm" min="0" max="40" value="${camState.f.warm}"></div>
+            <div class="lbl">선명도 <b id="vSharp">${camState.f.sharp}</b><input type="range" id="fSharp" min="0" max="40" value="${camState.f.sharp}"></div>
+            <div class="safety"><label><input type="checkbox" id="fMirror" ${camState.f.mirror?'checked':''}> 거울 모드(좌우 반전)</label></div>
+            <div class="row">
+              <button class="btn" id="camPreview">카메라 미리보기</button>
+              ${camState.on ? '<button class="btn danger" id="camStop">⏹ 송출 중지</button>' : '<button class="btn gold" id="camStart">🔴 송출 시작</button>'}
+            </div>
+            <div class="note" id="camMsg">${esc(camState.msg||'')}</div>
+            <div class="note">송출 경로 <code>live/${esc(s.id)}</code> · 720×1280 · 약 2 Mbps. 아이폰은 사파리, 안드로이드는 크롬에서. 화면을 끄거나 다른 앱으로 가면 송출이 멈춥니다.</div>
+          </div>
+        </div>
+      </div>`,
     create: () => `
       <div class="form">
         <div class="note">방송을 만들면 <b>전용 송출 경로(live/방송ID)</b>가 발급됩니다. 생성 후 "📡 방송 켜기" 탭에서 OBS·폰 설정값을 확인하세요.</div>
@@ -917,7 +1012,7 @@ function renderStudio() {
   };
   const es = $('#eSave'); if (es) es.onclick = () => { s.title = $('#eTitle').value.trim() || s.title; s.category = $('#eCat').value; s.hostName = $('#eHost').value.trim() || s.hostName; s.playUrl = $('#ePlay').value.trim(); s.hue = hue; s.emoji = emo; save(); pushStreamToServer(s).then(()=>{ STREAMS_SYNCED=false; syncAll().then(renderStudio); }); toast('저장했습니다'); };
   const sv = $('#svSave'); if (sv) sv.onclick = async () => { const tunnel = $('#svTunnel').value.trim().replace(/\/$/,''); const ip = $('#svIp').value.trim(); if (!tunnel.startsWith('https://')) { toast('터널 주소(https://…)를 입력하세요'); return; }
-    if (sb) { const r1 = await sb.rpc('apply_tunnel', { p_tunnel: tunnel }); if (r1.error) { toast('저장 실패: ' + r1.error.message); return; } if (ip) await sb.rpc('set_setting', { p_key: 'server_ip', p_value: ip }); STREAMS_SYNCED = false; await syncAll(); toast('서버에 저장됨 — 모든 라이브 방송이 이 주소로 연결됩니다'); renderStudio(); }
+    if (sb) { const r1 = await sb.rpc('apply_tunnel', { p_tunnel: tunnel }); if (r1.error) { toast('저장 실패: ' + r1.error.message); return; } if (ip) await sb.rpc('set_setting', { p_key: 'server_ip', p_value: ip }); const whip = $('#svWhip').value.trim().replace(/\/$/,''); await sb.rpc('set_setting', { p_key: 'whip_tunnel', p_value: whip }); STREAMS_SYNCED = false; await syncAll(); toast('서버에 저장됨 — 모든 라이브 방송이 이 주소로 연결됩니다'); renderStudio(); }
     else { S.server = { ip, tunnel }; s.playUrl = `${tunnel}/live/${s.id}/index.m3u8`; save(); renderStudio(); } };
   const pa = $('#pAdd'); if (pa) pa.onclick = async () => { const n = $('#pName').value.trim(); if (!n) return;
     if (sb) { const { error } = await sb.rpc('add_performer', { p_stream: s.id, p_name: n, p_emoji: $('#pEmo').value }); if (error) { toast('추가 실패: ' + error.message); return; } STREAMS_SYNCED = false; await syncAll(); renderStudio(); return; }
@@ -925,6 +1020,16 @@ function renderStudio() {
   app.querySelectorAll('[data-del]').forEach(b=>b.onclick=async ()=>{
     if (sb) { const { error } = await sb.rpc('remove_performer', { p_stream: s.id, p_performer: b.dataset.del }); if (error) { toast('삭제 실패: ' + error.message); return; } STREAMS_SYNCED = false; await syncAll(); renderStudio(); return; }
     s.performers = s.performers.filter(p=>p.id!==b.dataset.del); save(); renderStudio(); });
+  if (S.studioTab === 'cam') {
+    const bind = (id, key, lab) => { const el = $('#'+id); if (!el) return; el.oninput = () => { camState.f[key] = +el.value; const l = $('#'+lab); if (l) l.textContent = el.value; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} }; };
+    bind('fSmooth','smooth','vSmooth'); bind('fBright','bright','vBright'); bind('fWarm','warm','vWarm'); bind('fSharp','sharp','vSharp');
+    const mir = $('#fMirror'); if (mir) mir.onchange = () => { camState.f.mirror = mir.checked; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} };
+    const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>camSay('미리보기 중 — 보정을 조절한 뒤 송출 시작')).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
+    const cs = $('#camSel'); if (cs) cs.onchange = () => { if (camState.raw) camOpen(cs.value); };
+    const st = $('#camStart'); if (st) st.onclick = () => camStart(s).catch(e => camSay('오류: ' + e.message));
+    const sp = $('#camStop'); if (sp) sp.onclick = camStop;
+    if (camState.raw) camDraw();
+  }
   const ma = $('#mAdd'); if (ma) ma.onclick = () => { const n = $('#mName').value.trim(); if (n && !s.moderators.includes(n)) s.moderators.push(n); save(); renderStudio(); };
   app.querySelectorAll('[data-unmod]').forEach(b=>b.onclick=()=>{ s.moderators = s.moderators.filter(m=>m!==b.dataset.unmod); save(); renderStudio(); });
 }
