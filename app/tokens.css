@@ -286,7 +286,7 @@ select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmln
 .delta.down { color: #ff8a8e; }
 
 /* ---------- 투어 · 기타 ---------- */
-.tour { position: fixed; z-index: 150; left: 50%; bottom: calc(var(--bottom-nav-h) + 16px); transform: translateX(-50%); width: min(560px, calc(100% - 24px)); background: var(--bg-2); border: 1px solid var(--gold-line); border-radius: var(--r-xl); box-shadow: var(--shadow-lg); padding: 14px 16px; display: grid; gap: 8px; animation: up var(--t) var(--ease); }
+.tour { position: fixed; z-index: 90; left: 50%; bottom: calc(var(--bottom-nav-h) + 16px); transform: translateX(-50%); width: min(560px, calc(100% - 24px)); background: var(--bg-2); border: 1px solid var(--gold-line); border-radius: var(--r-xl); box-shadow: var(--shadow-lg); padding: 14px 16px; display: grid; gap: 8px; animation: up var(--t) var(--ease); }
 @media (min-width: 761px) { .tour { bottom: 20px; } }
 .tour .step { font-size: var(--fs-xs); color: var(--gold); font-weight: 700; letter-spacing: .08em; }
 .tour h4 { font-size: var(--fs-md); }
@@ -308,3 +308,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .badge-grid { display: flex; gap: 8px; flex-wrap: wrap; }
 .fan-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--r); background: var(--bg-3); border: 1px solid var(--line); font-size: var(--fs-sm); font-weight: 600; }
 .fan-badge.locked { opacity: .45; }
+
+body:has(.tour) .toast-root { bottom: calc(var(--bottom-nav-h) + 200px); }
+@media (min-width: 761px) { body:has(.tour) .toast-root { bottom: 200px; } }

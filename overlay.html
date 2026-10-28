@@ -41,6 +41,7 @@
   const showErr = (msg, sub) => { err.style.display = 'block'; err.innerHTML = msg + (sub ? `<small>${sub}</small>` : ''); };
   const streamId = (q.get('stream') || '').trim();
   if (q.get('bg') === '1') document.body.style.background = 'radial-gradient(ellipse at 50% 110%, #3a2a55 0%, #15121c 55%, #0b0b0d 100%)';   // 미리보기용 배경 (OBS 에서는 사용 안 함)
+  if (q.get('bg') === '1') document.body.style.background = 'radial-gradient(ellipse at 50% 110%, #3a2a55 0%, #15121c 55%, #0b0b0d 100%)';   // 미리보기용 배경 (OBS 에서는 사용 안 함)
   const param = (k, d) => q.has(k) ? q.get(k) : d;
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

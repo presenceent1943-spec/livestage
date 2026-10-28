@@ -5,9 +5,9 @@ import { data } from './data.js';
 const STEPS = [
   { title: '대표 방송 입장', text: '홈에서 오늘의 대표 무대를 고릅니다. 시청자 수·후원은 모두 시연 데이터입니다.', route: 'home', hl: '.scard.hero', next: '방송 입장', action: () => router.go('live/d1') },
   { title: '출연자 · 순위 · 라운드 규칙', text: '영상 위 순위판과 오른쪽 패널에서 라운드 집계, 남은 시간, 미션 진행률을 확인합니다. "라운드/누적/팀" 보기를 바꿔 보세요.', route: 'live/d1', hl: '#rankSeg', next: '다음' },
-  { title: '가상 선물 보내기', text: '지미에게 샴페인(300 스타)을 보내 봅니다. 잔액·대상·수량을 확인하고 "보내기"를 누르세요. 시연용 가상 포인트입니다.', route: 'live/d1', hl: '#giftBtn', wait: 'gift', setup: async () => { await data.setRole('viewer'); }, next: '선물 창 열기', action: () => $('#giftBtn')?.click() },
+  { title: '가상 선물 보내기', text: '지미에게 샴페인(300 스타)을 보내 봅니다. 잔액·대상·수량을 확인하고 "보내기"를 누르세요. 시연용 가상 포인트입니다.', route: 'live/d1', hl: '#giftBtn', wait: 'gift', setup: async () => { await data.setRole('viewer'); }, next: '선물 창 열기', action: () => window.LiveStageGift ? window.LiveStageGift('p-jimi', { gid: 'champ', qty: 1 }) : $('#giftBtn')?.click() },
   { title: '순위 역전과 미션 달성', text: '선물이 들어오면 순위판이 움직이고 효과가 재생됩니다. 300 스타 이상 한 번에 보내면 "지미 애교 3종" 미션이 달성됩니다. 왕관(1,000)을 보내면 큰 효과를 볼 수 있어요.', route: 'live/d1', hl: '#rank', next: '다음' },
-  { title: '스튜디오에서 라운드 종료', text: '호스트 역할로 전환해 라운드를 종료합니다. 우승자가 발표되고 결과가 기록됩니다.', route: 'studio/d1/rounds', setup: async () => { await data.setRole('host'); }, hl: '[data-act="endRound"], #rdEnd', wait: 'round-ended', next: '라운드 종료', action: () => ($('[data-act="endRound"]') || $('#rdEnd'))?.click() },
+  { title: '스튜디오에서 라운드 종료', text: '호스트 역할로 전환해 라운드를 종료합니다. 우승자가 발표되고 결과가 기록됩니다.', route: 'studio/d1/rounds', setup: async () => { await data.setRole('host'); }, hl: '[data-ra="end"]', wait: 'round-ended', next: '라운드 종료', action: () => $('[data-ra="end"]')?.click() },
   { title: '최종 결과와 정산 명세', text: '라운드 결과와 후원 원장을 바탕으로 정산 시뮬레이션을 확인합니다. 플랫폼·레이블·출연자 비율과 공제 항목이 분리되어 있고, CSV로 내려받을 수 있습니다.', route: 'settle/d1', hl: '.grid.stats', next: '다음' },
   { title: 'OBS 오버레이', text: '같은 순위판을 OBS 브라우저 소스로 넣어 송출 영상에 바로 얹을 수 있습니다. 미리보기에서 크기·위치·테마를 바꿔 보세요.', route: 'studio/d1/obs', hl: 'iframe', next: '시연 마치기', last: true },
 ];

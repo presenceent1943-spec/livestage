@@ -192,6 +192,7 @@ export default async function render(ctx) {
 
   // ---------- 가상 후원 ----------
   $('#giftBtn').onclick = () => openGift();
+  window.LiveStageGift = (pid, preset) => openGift(pid, preset); cleanup(() => { delete window.LiveStageGift; });
   async function openGift(preId, preset = {}) {
     if (!me()) { toast(isDemo ? '역할을 먼저 선택하세요' : '로그인이 필요합니다'); isDemo ? ctx.openRole() : ctx.openAuth(); return; }
     const acc = canAcceptGift(s, s.round); if (!acc.ok) { toast(acc.reason, 'warn'); return; }
