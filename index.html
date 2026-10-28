@@ -529,6 +529,16 @@ async function camStart(s) {
   const out = new MediaStream([cs.getVideoTracks()[0], ...camState.raw.getAudioTracks()]);
   const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   out.getTracks().forEach(t => pc.addTrack(t, out));
+  // 영상 코덱을 H264 → VP9 순으로 우선 지정. 브라우저 기본값(VP8)은 서버 HLS가 변환하지 못해 라이브 탭에서 404 가 남
+  try {
+    const tv = pc.getTransceivers().find(x => x.sender.track && x.sender.track.kind === 'video');
+    const caps = RTCRtpSender.getCapabilities && RTCRtpSender.getCapabilities('video');
+    if (tv && caps && tv.setCodecPreferences) {
+      const pref = []; for (const n of ['video/H264', 'video/VP9']) pref.push(...caps.codecs.filter(c => c.mimeType === n));
+      pref.push(...caps.codecs.filter(c => !pref.includes(c)));
+      tv.setCodecPreferences(pref);
+    }
+  } catch (e) {}
   pc.getSenders().forEach(sn => { if (sn.track.kind === 'video') { const p = sn.getParameters(); p.encodings = [{ maxBitrate: 2_000_000 }]; sn.setParameters(p).catch(()=>{}); } });
   const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
   await new Promise(r => { if (pc.iceGatheringState === 'complete') r(); else { const t = setTimeout(r, 2500); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); r(); } }; } });
