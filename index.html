@@ -1056,7 +1056,7 @@ function renderStudio() {
     app.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => { camState.f.rot = +b.dataset.rot; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} app.querySelectorAll('[data-rot]').forEach(x => x.classList.toggle('gold', x === b)); });
     const mir = $('#fMirror'); if (mir) mir.onchange = () => { camState.f.mirror = mir.checked; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} };
     const rs0 = $('#camReset'); if (rs0) rs0.onclick = () => { Object.assign(camState.f, { smooth: 0, bright: 0, warm: 0, sharp: 0, rot: 0, mirror: false }); try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} renderStudio(); if (camState.raw) camDraw(); };
-    const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>camSay('미리보기 중 — 보정을 조절한 뒤 송출 시작')).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
+    const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>{ const t = camState.raw?.getVideoTracks()[0]?.getSettings?.(); camSay(`미리보기 중 — 카메라 ${t?t.width+'×'+t.height:''} ${t && Math.min(t.width,t.height) < 600 ? '(해상도가 낮습니다 — 카메라 앱의 출력 해상도를 올리세요)' : ''}`); }).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
     const cs = $('#camSel'); if (cs) cs.onchange = () => { camState.devChosen = true; if (camState.raw) camOpen(cs.value).catch(e => camSay('카메라 전환 실패: ' + e.message)); };
     camListDevices();
     const st = $('#camStart'); if (st) st.onclick = () => camStart(s).catch(e => camSay('오류: ' + e.message));
