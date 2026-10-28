@@ -943,6 +943,7 @@ function renderStudio() {
             <div class="lbl">회전 (영상이 누워 보이면)<div class="row">${[0,90,180,270].map(r=>`<button class="btn sm ${camState.f.rot===r?'gold':''}" data-rot="${r}">${r}°</button>`).join('')}</div></div>
             <div class="row">
               <button class="btn" id="camPreview">카메라 미리보기</button>
+              <button class="btn sm ghost" id="camReset" title="보정 전부 0, 회전 0°">보정 초기화</button>
               ${camState.on ? '<button class="btn danger" id="camStop">⏹ 송출 중지</button>' : '<button class="btn gold" id="camStart">🔴 송출 시작</button>'}
             </div>
             <div class="note" id="camMsg">${esc(camState.msg||'')}</div>
@@ -1039,6 +1040,7 @@ function renderStudio() {
     bind('fSmooth','smooth','vSmooth'); bind('fBright','bright','vBright'); bind('fWarm','warm','vWarm'); bind('fSharp','sharp','vSharp');
     app.querySelectorAll('[data-rot]').forEach(b => b.onclick = () => { camState.f.rot = +b.dataset.rot; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} app.querySelectorAll('[data-rot]').forEach(x => x.classList.toggle('gold', x === b)); });
     const mir = $('#fMirror'); if (mir) mir.onchange = () => { camState.f.mirror = mir.checked; try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} };
+    const rs0 = $('#camReset'); if (rs0) rs0.onclick = () => { Object.assign(camState.f, { smooth: 0, bright: 0, warm: 0, sharp: 0, rot: 0, mirror: false }); try { localStorage.setItem('ls-cam-f', JSON.stringify(camState.f)); } catch(e) {} renderStudio(); if (camState.raw) camDraw(); };
     const pv = $('#camPreview'); if (pv) pv.onclick = () => camOpen($('#camSel').value).then(()=>camSay('미리보기 중 — 보정을 조절한 뒤 송출 시작')).catch(e => camSay('카메라를 열 수 없습니다: ' + e.message));
     const cs = $('#camSel'); if (cs) cs.onchange = () => { camState.devChosen = true; if (camState.raw) camOpen(cs.value).catch(e => camSay('카메라 전환 실패: ' + e.message)); };
     camListDevices();
