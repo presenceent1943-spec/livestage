@@ -478,16 +478,23 @@ async function camOpen(facing) {
   } else st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, audio });
   { const t = st.getVideoTracks()[0]?.getSettings?.(); if (t) camSay(`카메라 ${t.width}×${t.height}`); }
   camListDevices();
-  camState.raw = st; const v = $('#camRaw'); v.srcObject = st; await v.play().catch(()=>{});
+  camState.raw = st; const v = camVideoEl(); v.srcObject = st; await v.play().catch(()=>{});
   camDraw();
+}
+function camVideoEl() {
+  // 카메라 영상 요소는 DOM 과 무관하게 하나만 유지 (재렌더링에도 끊기지 않음)
+  if (!camState.vid) { camState.vid = document.createElement('video'); camState.vid.playsInline = true; camState.vid.muted = true; camState.vid.autoplay = true; }
+  return camState.vid;
 }
 function camDraw() {
   cancelAnimationFrame(camState.raf);
-  const v = $('#camRaw'), c = $('#camCanvas'); if (!v || !c) return;
-  const ctx = c.getContext('2d'); const W = c.width, H = c.height;
+  const v = camVideoEl();
+  if (!camState.cap) { camState.cap = document.createElement('canvas'); camState.cap.width = 720; camState.cap.height = 1280; }
+  const c = camState.cap; const ctx = c.getContext('2d'); const W = c.width, H = c.height;
   const off = document.createElement('canvas'); off.width = W; off.height = H; const octx = off.getContext('2d');
   const loop = () => {
-    if (!document.body.contains(c)) { camState.raf = 0; return; }
+    const vis = $('#camCanvas');
+    if (!vis && !camState.on) { camState.raf = 0; return; }   // 화면에도 없고 송출도 아니면 중단
     if (v.videoWidth) {
       const f = camState.f;
       // 영상 비율 맞춰 세로 꽉 채우기
@@ -508,6 +515,7 @@ function camDraw() {
       // 3) 따뜻함: 살짝 주황 오버레이
       if (f.warm > 0) { ctx.filter = 'none'; ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = `rgba(255,180,120,${f.warm/100*0.5})`; ctx.fillRect(0,0,W,H); ctx.globalCompositeOperation = 'source-over'; }
       ctx.restore();
+      if (vis) vis.getContext('2d').drawImage(c, 0, 0, vis.width, vis.height);
     }
     camState.raf = requestAnimationFrame(loop);
   };
@@ -517,7 +525,7 @@ async function camStart(s) {
   const base = (SETTINGS.whip_tunnel || '').replace(/\/$/,'');
   if (!base) { camSay('방송 켜기 탭 ③에 카메라 송출용 터널 주소를 먼저 저장하세요'); return; }
   if (!camState.raw) await camOpen($('#camSel').value);
-  const c = $('#camCanvas'); const cs = c.captureStream(30);
+  if (!camState.cap) camDraw(); const cs = camState.cap.captureStream(30);
   const out = new MediaStream([cs.getVideoTracks()[0], ...camState.raw.getAudioTracks()]);
   const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   out.getTracks().forEach(t => pc.addTrack(t, out));
@@ -939,7 +947,6 @@ function renderStudio() {
           <div>
             <div class="video" style="aspect-ratio:9/16;max-width:360px;margin:0 auto;position:relative"><canvas id="camCanvas" width="720" height="1280" style="display:block;width:100%;height:100%;object-fit:cover"></canvas>
               <div class="ov"><div class="ov-top"><span class="pill ${camState.on?'live':'gray'}" id="camBadge">${camState.on?'● 송출 중':'대기'}</span></div></div></div>
-            <video id="camRaw" playsinline muted autoplay style="display:none"></video>
           </div>
           <div style="display:grid;gap:10px;align-content:start">
             <div class="lbl">카메라 (YYCam 등 가상 카메라도 여기 표시됨)<select id="camSel"><option value="user">전면</option><option value="environment">후면</option></select></div>
